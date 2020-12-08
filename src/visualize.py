@@ -3,26 +3,6 @@ from matplotlib import image
 import torch
 from mpl_toolkits.axes_grid1 import ImageGrid
 
-def plt_image_pair(img_path, depth_path):
-    """
-    plot single image pair (image+depth) to tensorboard
-    """
-    pass
-
-
-def plt_batch(img_batch, depth_batch):
-    """
-    plot batch of image and depth pairs to tensorboard
-    """
-    pass
-
-
-def plt_prediction(img, pred_depth, ground_truth):
-    """
-    plot image + prediction vs ground truth to tboard.
-    """
-    pass
-
 
 # Helper function to show a batch
 def show_depths_batch(sample_batched):
