@@ -68,7 +68,7 @@ def show_batch(batch):
     # display actual image.
     for i, img_batch in enumerate(images_batches):
         if torch.is_tensor(img_batch):
-            img_batch = img_batch.numpy()
+            img_batch = img_batch.cpu().numpy()
             if img_batch.shape[1] == 3:
                 # reshape back from C X H X W into H X W X C.
                 img_batch = img_batch.transpose(0, 2, 3, 1)

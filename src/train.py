@@ -3,14 +3,15 @@ import torch.nn.functional as F
 import torch
 from data_loader import FarsightDataset, ToTensor
 from utils.definitions import DATA_DIR, get_depth_dir, get_img_dir
+import utils.definitions as defs
 import visualize as viz
 import model
 import torch.optim as optim
 import matplotlib.pyplot as plt
 from trains import Task
 
-task = Task.init(project_name='mde', task_name='test loop')
-logger = task.get_logger()
+# task = Task.init(project_name='mde', task_name='test loop')
+# logger = task.get_logger()
 
 
 def train(epochs=2):
@@ -27,29 +28,29 @@ def train(epochs=2):
     dataloader = torch.utils.data.DataLoader(ds,
                                              sampler=ds_sampler,
                                              batch_size=4,
-                                             num_workers=2)
-    # TODO: fix weird float32 requirement in conv2d to work with uint8.
+                                             num_workers=0)
+    # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
     net = nn.Sequential(
         nn.Conv2d(3, 6, 5),
         nn.ReLU(),
         nn.ConvTranspose2d(6, 1, 5),
         model.Squeeze()
     )
-
+    net.to(device=defs.get_cuda())
+    num_batches = len(dataloader)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(net.parameters())
-    for epoch in range(2):  # loop over the dataset multiple times
+    for epoch in range(epochs):  # loop over the dataset multiple times
         running_loss = 0.0
         for i, data in enumerate(dataloader):
             # get the inputs; data is a list of [input images, depth maps]
             inputs, gt_depths = data['image'], data['depth']
 
             optimizer.zero_grad()
-            print('input shape {}, type: {}'.format(inputs.size(), inputs.dtype))
+            # print('input shape {}, type: {}'.format(inputs.size(), inputs.dtype))
             outputs = net(inputs)
-            print('out shape: {}, gt_shape: {}'.format(outputs.size(), gt_depths.size()))
-            viz.show_batch({**data, 'pred': outputs.detach().numpy()})
-            plt.show()
+            # print('out shape: {}, gt_shape: {}'.format(outputs.size(), gt_depths.size()))
+
             loss = criterion(outputs, gt_depths)
             loss.backward()
             optimizer.step()
@@ -59,8 +60,13 @@ def train(epochs=2):
             if i % 5 == 4:
                 print('[%d, %5d] loss: %.3f' %
                       (epoch + 1, i + 1, running_loss / 5))
+                # logger.report_scalar("loss", "loss",
+                #                      iteration=(epoch * num_batches + i),
+                #                      value=running_loss / 5)
                 running_loss = 0.0
-            break
+        viz.show_batch({**data, 'pred': outputs.detach()})
+        plt.title('epoch {}'.format(epoch))
+        plt.show()
     print('Finished Training')
 
 
