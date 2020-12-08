@@ -7,11 +7,18 @@ import visualize as viz
 import model
 import torch.optim as optim
 import matplotlib.pyplot as plt
-def train(epochs = 2):
+from trains import Task
+
+task = Task.init(project_name='mde', task_name='test loop')
+logger = task.get_logger()
+
+
+def train(epochs=2):
     """
     main training loop.
     """
     print('started')
+    # create dataset
     ds = FarsightDataset(img_dir=get_img_dir(),
                          depth_dir=get_depth_dir(),
                          transform=ToTensor())
@@ -19,45 +26,42 @@ def train(epochs = 2):
     ds_sampler = torch.utils.data.SubsetRandomSampler(indices)
     dataloader = torch.utils.data.DataLoader(ds,
                                              sampler=ds_sampler,
-                                             batch_size=10,
+                                             batch_size=4,
                                              num_workers=2)
-    print(len(dataloader))
-    for i_batch, sample_batched in enumerate(dataloader):
-        print(i_batch, sample_batched['image'].size(),
-              sample_batched['depth'].size())
+    # TODO: fix weird float32 requirement in conv2d to work with uint8.
+    net = nn.Sequential(
+        nn.Conv2d(3, 6, 5),
+        nn.ReLU(),
+        nn.ConvTranspose2d(6, 1, 5),
+        model.Squeeze()
+    )
 
-        # observe 4th batch and stop.
-        if i_batch == 0:
-            plt.figure()
-            viz.show_depths_batch(sample_batched)
-            # plt.axis('off')
-            plt.show()
-            break
-
-    # for data in enumerate():
-    # net = model.ToyNet()
-    # criterion = nn.MSELoss()
-    # optimizer = optim.Adam(net.parameters())
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(net.parameters())
     for epoch in range(2):  # loop over the dataset multiple times
-        break
         running_loss = 0.0
-        for i, data in enumerate(trainloader):
+        for i, data in enumerate(dataloader):
             # get the inputs; data is a list of [input images, depth maps]
-            inputs, gt_depths = data
+            inputs, gt_depths = data['image'], data['depth']
 
             optimizer.zero_grad()
+            print('input shape {}, type: {}'.format(inputs.size(), inputs.dtype))
             outputs = net(inputs)
+            print('out shape: {}, gt_shape: {}'.format(outputs.size(), gt_depths.size()))
+            viz.show_batch({**data, 'pred': outputs.detach().numpy()})
+            plt.show()
             loss = criterion(outputs, gt_depths)
             loss.backward()
             optimizer.step()
 
             # print statistics
             running_loss += loss.item()
-            if i % 5 == 4:  # print every 2000 mini-batches
+            if i % 5 == 4:
                 print('[%d, %5d] loss: %.3f' %
                       (epoch + 1, i + 1, running_loss / 5))
                 running_loss = 0.0
-
+            break
     print('Finished Training')
+
 
 train()

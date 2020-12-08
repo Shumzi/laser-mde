@@ -64,11 +64,14 @@ class ToTensor(object):
         # swap color axis because
         # numpy image: H x W x C
         # torch image: C X H X W
-        image = image.transpose((2, 0, 1))
-        # depth = depth[np.newaxis]
+        # in addition, conv2d doesn't really work with uint8,
+        # so change to float32 & range [0..1] instead of [0..255].
+        image = image.transpose((2, 0, 1)).astype(np.float32)/256
+        # same problem with depth. don't need to divide though.
+        depth = depth.astype(np.float32)
         # depth is just H X W, so no problem here.
         return {'image': torch.from_numpy(image),
-                'depth': torch.from_numpy(np.int16(depth)),
+                'depth': torch.from_numpy(depth),
                 'name': sample['name']}
 
 
@@ -79,13 +82,15 @@ if __name__ == '__main__':
                             batch_size=4, shuffle=True, num_workers=2)
 
     for i_batch, sample_batched in enumerate(dataloader):
-        print(i_batch, sample_batched['image'].size(),
-              sample_batched['depth'].size())
+        print('batch #{}, img size: {}, depth size: {}'.format(i_batch,
+                                                               sample_batched['image'].size(),
+                                                               sample_batched['depth'].size()))
 
         # observe 4th batch and stop.
         if i_batch == 0:
             plt.figure()
-            viz.show_depths_batch(sample_batched)
+            viz.show_batch(sample_batched)
+
             # plt.axis('off')
             plt.show()
             break
