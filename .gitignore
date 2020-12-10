@@ -90,3 +90,4 @@ target/
 /src_transfer_learning/
 /src_eigen/
 /src_unet/
+/notebooks/runs/

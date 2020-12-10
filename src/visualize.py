@@ -40,12 +40,19 @@ def show_batch(batch):
     input:
     Args:
         batch: dict of batch, each key being a different type of image.
-    e.g.
-    batch = {'image':list_of_images, 'depth':list_of_depths}
-    len(list_of_images) == 3 -> True.
-    if batch contains a list of 'name's of fn for each image, it'll display in the plot as well.
+
+    Returns: fig of plot.
+
+    Examples:
+        batch = {'image':list_of_images, 'depth':list_of_depths}
+        len(list_of_images) == 3 -> True.
+        if batch contains a list of 'name's of fn for each image, it'll display in the plot as well.
+
     """
-    filenames = batch.pop('name')
+    try:
+        filenames = batch.pop('name')
+    except:
+        filenames = None
     types, images_batches = list(batch.keys()), list(batch.values())  # images_batches: list(batches)
     batch_size = len(images_batches[0])
     type_size = len(images_batches)  # amount of types of images we'll be displaying.
@@ -68,9 +75,10 @@ def show_batch(batch):
     # display actual image.
     for i, img_batch in enumerate(images_batches):
         if torch.is_tensor(img_batch):
-            img_batch = img_batch.cpu().numpy()
+            img_batch = img_batch.detach().cpu().numpy()
             if img_batch.shape[1] == 3:
                 # reshape back from C X H X W into H X W X C.
                 img_batch = img_batch.transpose(0, 2, 3, 1)
         for j, img in enumerate(img_batch):
             ax[i, j].imshow(img)
+    return fig

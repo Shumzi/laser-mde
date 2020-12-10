@@ -1,8 +1,9 @@
 from __future__ import print_function, division
 import logging
 import sys
-from utils.definitions import DATA_DIR, get_depth_dir, get_img_dir
-import utils.definitions as defs
+
+from utils import DATA_DIR, get_depth_dir, get_img_dir
+import utils as defs
 import visualize as viz
 # load and display an image with Matplotlib
 import random
@@ -58,19 +59,20 @@ class FarsightDataset(Dataset):
 
 
 class ToTensor(object):
-    """Convert ndarrays in sample to Tensors."""
+    """Convert ndarrays in sample to Tensors
+    and moves them into the correct range for conv operations."""
 
     def __call__(self, sample):
         image, depth = sample['image'], sample['depth']
-        dev = defs.get_cuda()
+        dev = defs.get_dev()
         # swap color axis because
         # numpy image: H x W x C
         # torch image: C X H X W
         # in addition, conv2d doesn't really work with uint8,
         # so change to float32 & range [0..1] instead of [0..255].
-        image = image.transpose((2, 0, 1)).astype(np.float32)/256
+        image = (image.transpose((2, 0, 1)).astype(np.float32)/256)[:,:-1,:-1]
         # same problem with depth. depth is in bins of 4m, max 250 (1000m). Moving to [0..1] 
-        depth = depth.astype(np.float32)/250
+        depth = (depth.astype(np.float32)/250)[:-1,:-1]
         # depth is just H X W, so no problem here.
         return {'image': torch.from_numpy(image).to(device=dev),
                 'depth': torch.from_numpy(depth).to(device=dev),
@@ -79,6 +81,9 @@ class ToTensor(object):
 
     
 if __name__ == '__main__':
+    """
+    basic test to see that the dataloader works ok.
+    """
     dataloader = DataLoader(FarsightDataset(img_dir=get_img_dir(),
                                             depth_dir=get_depth_dir(),
                                             transform=ToTensor()),
@@ -90,7 +95,7 @@ if __name__ == '__main__':
                                                                sample_batched['depth'].size()))
 
         # observe 4th batch and stop.
-        if i_batch == 0:
+        if i_batch == 3:
             fig = plt.figure()
             viz.show_batch(sample_batched)
             plt.title('hi')
