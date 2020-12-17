@@ -1,0 +1,28 @@
+# possibly move to Hydra (FB) if things get complex.
+dataset:
+  data_dir: ../data/farsight
+  depth_foldername: depth
+  img_foldername: img
+model:
+  use_cuda: True
+  script_path: ../models/optimized.py
+  init_weight: True
+  arch: UNet
+  loss: #todo
+optimizer:
+  script_path: ../optimizers/adam_keras.py
+  lr: 1.e-3
+train:
+  batch_size: 2
+  epochs: 5
+  subset_ds_size: 50
+  val_round: False
+  val_percent: 0.2
+  run_name: ''
+  print_every: 10
+  data_augmentation:
+    horizontal_flip: True
+evaluate:
+  batch_size: 1000
+  augmentation_factor: 32
+  data_augmentation:
