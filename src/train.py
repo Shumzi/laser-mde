@@ -44,10 +44,8 @@ def weight_init(m):
 def train():
     """
     main train loop. all configurations are taken from the configs.yml file.
-
     Returns:
         trained net
-
     """
     logging.info('getting params, dataloaders, etc...')
     cfg_train = cfg['train']

@@ -9,19 +9,19 @@ model:
   weight_init: True
   arch:
     name: UNet
-    use_bn: True
+    use_bn: True #TODO layernorm.
   loss: #todo
 optimizer:
-  lr: 1.e-1
+  lr: 1.e-2
 train:
-  batch_size: 4
-  epochs: 5
-  subset_ds_size: 50
-  val_round: True
+  batch_size: 2
+  epochs: 100
+  subset_ds_size: 2
+  val_round: False
   val_percent: 0.2
   run_name: ''
-  print_every: 10
-  data_augmentation:
+  print_every: 5
+  data_augmentation: # TODO: data augement.
     horizontal_flip: True
 evaluate:
   batch_size: 1000

@@ -66,7 +66,6 @@ class UNet(nn.Module):
         self.pool1 = nn.MaxPool2d(2)
         self.pool2 = nn.MaxPool2d(2)
         self.pool3 = nn.MaxPool2d(2)
-        # self.pool3790004 = nn.MaxPool2d(2)
 
         self.conv_block3_16 = UNetConvBlock(3, 16)
         self.conv_block16_32 = UNetConvBlock(16, 32)
