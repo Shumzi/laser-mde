@@ -5,8 +5,7 @@ import torch
 
 ROOT_DIR = Path(__file__).parents[2]
 DATA_DIR = \
-    Path(
-        r'/media/ariel/6EEE7AB0EE7A7067/Users/Ariel/Documents/DS הכשרה_/15. MDE with laser reference point/laser-mde/data')
+    Path(r'../data')
 USE_CUDA = True
 
 

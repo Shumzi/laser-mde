@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader, Subset, random_split
 from torch.utils.tensorboard import SummaryWriter
 
 import matplotlib.pyplot as plt
-from trains import Task
+# from trains import Task
 from tqdm import tqdm
 
 sys.path.append(os.path.join('../src'))
@@ -98,7 +98,7 @@ def train(epochs=2,
                         tag = tag.replace('.', '/')
                         writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
                         writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
-
+                    print('printing...')
                     writer.add_images('images', imgs, epoch)
                     writer.add_images('masks/true', gt_depths.unsqueeze(1), epoch)
                     writer.add_images('masks/pred', pred_depth.unsqueeze(1), epoch)
@@ -110,5 +110,5 @@ def train(epochs=2,
     print('Finished Training')
     writer.close()
 
-if __name__=='__main':
+if __name__=='__main__':
     train(10)
