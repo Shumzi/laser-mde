@@ -46,12 +46,11 @@ def eval_net(net, loader, metric, writer, step):
     Validation stage in the training loop.
 
     Args:
-
-        net: network being validated
+        net: network being trained
         loader: data loader of validation data
         metric: metric to test validation upon.
-        writer: summarywriter for tensorboard.
-        step: int, step no. for tensorboard.
+        writer: SummaryWriter for tensorboard.
+        step: int, global step no. for tensorboard.
     Returns: score of eval based on criterion.
 
     """
@@ -69,6 +68,5 @@ def eval_net(net, loader, metric, writer, step):
                 writer.add_images('val/gt', gt_depths.unsqueeze(1), step)
             pbar.update()
     score /= n_val
-#     viz.
     net.train()
     return score

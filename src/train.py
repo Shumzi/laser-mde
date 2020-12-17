@@ -17,16 +17,17 @@ from other_models.tiny_unet import UNet
 from utils import get_depth_dir, get_img_dir, get_dev, cfg
 import cProfile
 
-
-# sys.path.append(os.path.join('../src'))
-
+logger = logging.getLogger(__name__)
+if cfg['verbose']:
+    logger.setLevel(logging.INFO)
 
 # task = Task.init(project_name='mde', task_name='test loop')
 # logger = task.get_logger()
-
 def weight_init(m):
     """
-    initialize weights of net to Kaiming and biases to zero.
+    initialize weights of net to Kaiming and biases to zero,
+    since pytorch doesn't do that.
+
     Usage: net.apply(weight_init)
 
     Args:
@@ -37,6 +38,8 @@ def weight_init(m):
 
     """
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        m.weight.data   
+        print(m.weight.data)
         nn.init.kaiming_normal_(m.weight.data, nonlinearity='relu')
         nn.init.zeros_(m.bias)
 
@@ -47,43 +50,42 @@ def train():
     Returns:
         trained net
     """
-    logging.info('getting params, dataloaders, etc...')
+    logger.info('getting params, dataloaders, etc...')
     cfg_train = cfg['train']
     epochs = cfg_train['epochs']
     run_name = cfg_train['run_name']
     print_every = cfg_train['print_every']
     writer = SummaryWriter(comment=run_name)
 
-    n_train, n_val, train_loader, val_loader = get_loaders()
+    train_loader, val_loader = get_loaders()
     n_batches = len(train_loader)
     # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
-    criterion, net, num_batches, optimizer = get_net(train_loader)
+    criterion, net, optimizer = get_net()
 
-    logging.info('got all params, starting train loop')
-    global_step = 0
+    logger.info('got all params, starting train loop')
     for epoch in range(epochs):  # loop over the dataset multiple times
         net.train()
         with tqdm(total=n_batches, desc=f'Epoch {epoch + 1}/{epochs}', unit='batch') as pbar:
             running_loss = 0.0
-            for i, data in enumerate(train_loader):
+            for data in train_loader:
                 # get the inputs; data is a list of [input images, depth maps]
                 img, gt_depth = data['image'], data['depth']
                 loss, pred_depth = step(criterion, img, gt_depth, net, optimizer)
                 loss_val = loss.item()
-                logging.info(f'loss: {loss_val}')
+                logger.info(f'loss: {loss_val}')
                 pbar.set_postfix(**{'loss (batch)': loss_val})
                 running_loss += loss_val
                 pbar.update()
 
-                if global_step % print_every == print_every - 1:
-                    if cfg_train['val_round']:
-                        val_score = model.eval_net(net, val_loader, criterion, writer, global_step)
-                    else:
-                        val_score = None
-                    print_stats(net, data, global_step, val_score,
-                                pred_depth, running_loss, writer)
-                    running_loss = 0.0
-                global_step += 1
+            if epoch % print_every == print_every - 1:
+                if cfg_train['val_round']:
+                    val_score = model.eval_net(net, val_loader, criterion, writer, epoch)
+                    # TODO: maybe add train_val
+                else:
+                    val_score = None
+                print_stats(net, data, epoch, val_score,
+                            pred_depth, running_loss, writer) 
+                running_loss = 0.0
     print('Finished Training')
     writer.close()
     return gt_depth, pred_depth
@@ -98,50 +100,48 @@ def step(criterion, img, gt_depth, net, optimizer):
     return loss, pred_depth
 
 
-def print_stats(net, data, global_step, val_score,
+def print_stats(net, data, epoch, val_score,
                 pred_depth, running_loss, writer):
 
     print_every = cfg['train']['print_every']
-    writer.add_scalar('Loss/train', running_loss / print_every, global_step + 1)
-    logging.warning('\ntrain loss: {}'.format(running_loss / print_every))
+    writer.add_scalar('Loss/train', running_loss / print_every, epoch + 1)
+    logger.warning('\ntrain loss: {}'.format(running_loss / print_every))
 
     if val_score is not None:
-        writer.add_scalar('Metric/test', val_score, global_step)
-        logging.warning('\nValidation loss (metric?): {}'.format(val_score))
+        writer.add_scalar('Metric/test', val_score, epoch)
+        logger.warning('\nValidation loss (metric?): {}'.format(val_score))
 
     for tag, value in net.named_parameters():
         tag = tag.replace('.', '/')
-        writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), global_step)
-        writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), global_step)
+        writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
+        writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
 
-    writer.add_histogram('values', pred_depth.detach().cpu().numpy(), global_step)
+    writer.add_histogram('values', pred_depth.detach().cpu().numpy(), epoch)
     fig = viz.show_batch({**data, 'pred': pred_depth.detach()})
-    fig.suptitle(f'step {global_step}', fontsize='xx-large')
-    writer.add_figure(tag='epoch/end', figure=fig, global_step=global_step)
-    writer.add_images('images', data['image'], global_step)
-    writer.add_images('masks/gt', data['depth'].unsqueeze(1), global_step)
-    writer.add_images('masks/pred', pred_depth.unsqueeze(1), global_step)
+    fig.suptitle(f'step {epoch}', fontsize='xx-large')
+    writer.add_figure(tag='epoch/end', figure=fig, epoch=epoch)
+    writer.add_images('images', data['image'], epoch)
+    writer.add_images('masks/gt', data['depth'].unsqueeze(1), epoch)
+    writer.add_images('masks/pred', pred_depth.unsqueeze(1), epoch)
 
 
-def get_net(train_loader):
-    cfg_optim = cfg['optimizer']
+def get_net():
+    cfg_model = cfg['model']
     net = UNet()
     net.to(device=get_dev())
     print('using ', get_dev())
-    if cfg['model']['weight_init']:
+    if cfg_model['weight_init']:
         net.apply(weight_init)
-    num_batches = len(train_loader)
-    print('num_batches: ', num_batches)
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(net.parameters(), lr=cfg_optim['lr'])
-    return criterion, net, num_batches, optimizer
+    optimizer = optim.Adam(net.parameters(), lr=cfg_model['lr'])
+    return criterion, net, optimizer
 
 
 def get_loaders():
     cfg_train = cfg['train']
     batch_size = cfg_train['batch_size']
     val_percent = cfg_train['val_percent']
-    subset_size = cfg_train['subset_ds_size']
+    subset_size = cfg_train['subset_size']
     ds = FarsightDataset(transform=ToTensor())
     if subset_size is not None:
         ds = Subset(ds, range(subset_size))
@@ -158,7 +158,7 @@ def get_loaders():
                             shuffle=False,
                             batch_size=batch_size,
                             num_workers=0)
-    return n_train, n_val, train_loader, val_loader
+    return train_loader, val_loader
 
 
 if __name__ == '__main__':
