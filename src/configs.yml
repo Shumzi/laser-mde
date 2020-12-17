@@ -6,17 +6,18 @@ dataset:
 model:
   use_cuda: True
   script_path: ../models/optimized.py
-  init_weight: True
-  arch: UNet
+  weight_init: True
+  arch:
+    name: UNet
+    use_bn: True
   loss: #todo
 optimizer:
-  script_path: ../optimizers/adam_keras.py
-  lr: 1.e-3
+  lr: 1.e-1
 train:
-  batch_size: 2
+  batch_size: 4
   epochs: 5
   subset_ds_size: 50
-  val_round: False
+  val_round: True
   val_percent: 0.2
   run_name: ''
   print_every: 10

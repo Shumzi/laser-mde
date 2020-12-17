@@ -57,6 +57,7 @@ def train():
     writer = SummaryWriter(comment=run_name)
 
     n_train, n_val, train_loader, val_loader = get_loaders()
+    n_batches = len(train_loader)
     # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
     criterion, net, num_batches, optimizer = get_net(train_loader)
 
@@ -64,7 +65,7 @@ def train():
     global_step = 0
     for epoch in range(epochs):  # loop over the dataset multiple times
         net.train()
-        with tqdm(total=n_train, desc=f'Epoch {epoch + 1}/{epochs}', unit='img') as pbar:
+        with tqdm(total=n_batches, desc=f'Epoch {epoch + 1}/{epochs}', unit='batch') as pbar:
             running_loss = 0.0
             for i, data in enumerate(train_loader):
                 # get the inputs; data is a list of [input images, depth maps]
@@ -74,7 +75,7 @@ def train():
                 logging.info(f'loss: {loss_val}')
                 pbar.set_postfix(**{'loss (batch)': loss_val})
                 running_loss += loss_val
-                pbar.update(img.shape[0])
+                pbar.update()
 
                 if global_step % print_every == print_every - 1:
                     if cfg_train['val_round']:
@@ -101,13 +102,14 @@ def step(criterion, img, gt_depth, net, optimizer):
 
 def print_stats(net, data, global_step, val_score,
                 pred_depth, running_loss, writer):
+
     print_every = cfg['train']['print_every']
     writer.add_scalar('Loss/train', running_loss / print_every, global_step + 1)
-    logging.warning('train loss: {}'.format(running_loss / print_every))
+    logging.warning('\ntrain loss: {}'.format(running_loss / print_every))
 
     if val_score is not None:
         writer.add_scalar('Metric/test', val_score, global_step)
-        logging.warning('Validation loss (metric?): {}'.format(val_score))
+        logging.warning('\nValidation loss (metric?): {}'.format(val_score))
 
     for tag, value in net.named_parameters():
         tag = tag.replace('.', '/')
@@ -117,10 +119,9 @@ def print_stats(net, data, global_step, val_score,
     writer.add_histogram('values', pred_depth.detach().cpu().numpy(), global_step)
     fig = viz.show_batch({**data, 'pred': pred_depth.detach()})
     fig.suptitle(f'step {global_step}', fontsize='xx-large')
-    print('adding plot')
     writer.add_figure(tag='epoch/end', figure=fig, global_step=global_step)
     writer.add_images('images', data['image'], global_step)
-    writer.add_images('masks/true', data['depth'].unsqueeze(1), global_step)
+    writer.add_images('masks/gt', data['depth'].unsqueeze(1), global_step)
     writer.add_images('masks/pred', pred_depth.unsqueeze(1), global_step)
 
 
@@ -129,7 +130,8 @@ def get_net(train_loader):
     net = UNet()
     net.to(device=get_dev())
     print('using ', get_dev())
-    net.apply(weight_init)
+    if cfg['model']['weight_init']:
+        net.apply(weight_init)
     num_batches = len(train_loader)
     print('num_batches: ', num_batches)
     criterion = nn.MSELoss()
