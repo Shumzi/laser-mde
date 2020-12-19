@@ -19,6 +19,7 @@ def show_batch(**batch): #TODO: check that you can just do this and then everyth
                 'depth':list_of_depths,
                 'name':list_of_filenames}
         >> show_batch(batch)
+        >> plt.show()
     """
     try:
         filenames = batch.pop('name')
