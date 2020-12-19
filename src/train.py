@@ -127,11 +127,16 @@ def print_stats(net, data, epoch, val_score,
 
 def get_net():
     cfg_model = cfg['model']
-    net = UNet()
+    model_name = cfg_model['name'].lower()
+    if model_name == 'unet':
+        net = UNet()
+    elif model_name == 'toynet':
+        net = model.toyNet()
     net.to(device=get_dev())
     print('using ', get_dev())
     if cfg_model['weight_init']:
         net.apply(weight_init)
+    # TODO: use loss in configs for loss.
     criterion = nn.MSELoss()
     optimizer = optim.Adam(net.parameters(), lr=cfg_model['lr'])
     return criterion, net, optimizer
@@ -149,7 +154,9 @@ def get_loaders():
     n_train = len(ds) - n_val
     train_split, val_split = random_split(ds,
                                           [n_train, n_val],
-                                          generator=torch.Generator().manual_seed(42))
+                                          generator=torch.Generator().manual_seed(42)) 
+                                          # TODO: check rnd. gen is consistent.
+                                          # TODO: make optional to use manual seed or random at some point. (same for DL?)
     train_loader = DataLoader(train_split,
                               shuffle=False,
                               batch_size=batch_size,

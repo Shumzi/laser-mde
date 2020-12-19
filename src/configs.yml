@@ -5,12 +5,13 @@ dataset:
   img_foldername: img
 model:
   use_cuda: True
-  script_path: ../models/optimized.py
   weight_init: True
   arch:
     name: UNet
     use_bn: True
-  loss: #todo
+  # loss: # TODO: use loss in get_net.
+  # randomdata?
+  # shuffledata?
   lr: 1.e-2
 train:
   batch_size: 2
@@ -22,8 +23,6 @@ train:
   print_every: 5
   # data_augmentation: # TODO: data augement.
   #   horizontal_flip: True
-evaluate:
-  batch_size: 50
-  augmentation_factor: 32
-  data_augmentation:
+evaluate: # TODO: actually take eval into account.
+  batch_size: 50 
 verbose: True

@@ -34,20 +34,21 @@ def show_image_triplet(data, output):
         ax[i].imshow(depth)
 
 
-def show_batch(batch):
+def show_batch(**batch): #TODO: check that you can just do this and then everything is easier.
     """
     plot a batch of samples. can be images + depth + pred, or whatever.
     input:
     Args:
         batch: dict of batch, each key being a different type of image.
+                If dict contains 'name' key, it'll be used as the filenames for each img tuple.
 
     Returns: fig of plot.
 
     Examples:
-        batch = {'image':list_of_images, 'depth':list_of_depths}
-        len(list_of_images) == 3 -> True.
-        if batch contains a list of 'name's of fn for each image, it'll display in the plot as well.
-
+        >> batch = {'image':list_of_images, 
+                'depth':list_of_depths,
+                'name':list_of_filenames}
+        >> show_batch(batch)
     """
     try:
         filenames = batch.pop('name')
