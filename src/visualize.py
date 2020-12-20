@@ -4,7 +4,7 @@ import torch
 from mpl_toolkits.axes_grid1 import ImageGrid
 
 
-def show_batch(**batch): #TODO: check that you can just do this and then everything is easier.
+def show_batch(batch): #TODO: check that you can just do this and then everything is easier.
     """
     plot a batch of samples. can be images + depth + pred, or whatever.
     input:
@@ -28,7 +28,6 @@ def show_batch(**batch): #TODO: check that you can just do this and then everyth
     types, images_batches = list(batch.keys()), list(batch.values())  # images_batches: list(batches)
     batch_size = len(images_batches[0])
     type_size = len(images_batches)  # amount of types of images we'll be displaying.
-    print('batch size: ', batch_size)
     fig, ax = plt.subplots(type_size, batch_size, figsize=(batch_size * 4, type_size * 4))
     # plt.tight_layout()
     # image type

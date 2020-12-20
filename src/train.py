@@ -38,8 +38,7 @@ def weight_init(m):
 
     """
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-        m.weight.data   
-        print(m.weight.data)
+        m.weight.data
         nn.init.kaiming_normal_(m.weight.data, nonlinearity='relu')
         nn.init.zeros_(m.bias)
 
@@ -115,11 +114,11 @@ def print_stats(net, data, epoch, val_score,
         tag = tag.replace('.', '/')
         writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
         writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
-
+    logger.info('logging images...')
     writer.add_histogram('values', pred_depth.detach().cpu().numpy(), epoch)
     fig = viz.show_batch({**data, 'pred': pred_depth.detach()})
     fig.suptitle(f'step {epoch}', fontsize='xx-large')
-    writer.add_figure(tag='epoch/end', figure=fig, epoch=epoch)
+    writer.add_figure(tag='epoch/end', figure=fig, global_step=epoch)
     writer.add_images('images', data['image'], epoch)
     writer.add_images('masks/gt', data['depth'].unsqueeze(1), epoch)
     writer.add_images('masks/pred', pred_depth.unsqueeze(1), epoch)
