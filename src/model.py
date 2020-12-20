@@ -41,15 +41,16 @@ class WeightValues(nn.Module):
         return x
     
     
-def eval_net(net, loader, metric):
+def eval_net(net, loader, metric, writer, step):
     """
     Validation stage in the training loop.
 
     Args:
-        net: network being validated
+        net: network being trained
         loader: data loader of validation data
         metric: metric to test validation upon.
-
+        writer: SummaryWriter for tensorboard.
+        step: int, global step no. for tensorboard.
     Returns: score of eval based on criterion.
 
     """
@@ -61,10 +62,11 @@ def eval_net(net, loader, metric):
             imgs, gt_depths = batch['image'], batch['depth']
             with torch.no_grad():
                 pred_depths = net(imgs)
-                # writer.
             score += metric(pred_depths, gt_depths)
+            if i == n_val - 1:
+                writer.add_images('val/pred', pred_depths.unsqueeze(1), step)
+                writer.add_images('val/gt', gt_depths.unsqueeze(1), step)
             pbar.update()
     score /= n_val
-#     viz.
     net.train()
     return score

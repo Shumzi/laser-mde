@@ -1,7 +1,0 @@
-config file for params
-lr
-arch
-every. constant.
-
-functions
-smaller than a pagesize

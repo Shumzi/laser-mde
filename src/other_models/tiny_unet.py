@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-use_bn = False
+from utils import cfg
+
 
 class UNetConvBlock(nn.Module):
     """
@@ -14,13 +15,13 @@ class UNetConvBlock(nn.Module):
         self.conv = nn.Conv2d(in_size, out_size, kernel_size, padding=1)
         self.conv2 = nn.Conv2d(out_size, out_size, kernel_size, padding=1)
         self.activation = activation
-        if use_bn:
+        if cfg['model']['use_bn']:
             self.bn = nn.BatchNorm2d(out_size)
 
     def forward(self, x):
         out = self.activation(self.conv(x))
         out = self.activation(self.conv2(out))
-        if use_bn:
+        if cfg['model']['use_bn']:
             out = self.bn(out)
         return out
 
@@ -39,7 +40,7 @@ class UNetUpBlock(nn.Module):
         self.conv = nn.Conv2d(in_size, out_size, kernel_size, padding=1)
         self.conv2 = nn.Conv2d(out_size, out_size, kernel_size, padding=1)
         self.activation = activation
-        if use_bn:
+        if cfg['model']['use_bn']:
             self.bn = nn.BatchNorm2d(out_size)
 
     def forward(self, x, bridge):
@@ -47,7 +48,7 @@ class UNetUpBlock(nn.Module):
         out = torch.cat([up, bridge], 1)
         out = self.activation(self.conv(out))
         out = self.conv2(out)
-        if use_bn:
+        if cfg['model']['use_bn']:
             out = self.bn(out)
         return out
 
@@ -66,7 +67,6 @@ class UNet(nn.Module):
         self.pool1 = nn.MaxPool2d(2)
         self.pool2 = nn.MaxPool2d(2)
         self.pool3 = nn.MaxPool2d(2)
-        # self.pool3790004 = nn.MaxPool2d(2)
 
         self.conv_block3_16 = UNetConvBlock(3, 16)
         self.conv_block16_32 = UNetConvBlock(16, 32)
