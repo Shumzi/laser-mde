@@ -92,3 +92,4 @@ target/
 /src_unet/
 /notebooks/runs/
 /src/runs/
+/models/

@@ -87,8 +87,13 @@ def train():
                 running_loss = 0.0
     print('Finished Training')
     writer.close()
-    # if cfg_train['save']:
-    #     torch.save(net.state_dict(), os.path.join(cfg_train['foldername'],))
+    if cfg_train['save']:
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': net.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': loss,
+        }, os.path.join(cfg_train['foldername'], run_name + '.pt'))
     return gt_depth, pred_depth
 
 
@@ -118,12 +123,11 @@ def print_stats(net, data, epoch, val_score,
             tag = tag.replace('.', '/')
             writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
             writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
+        writer.add_histogram('values', pred_depth.detach().cpu().numpy(), epoch)
     logger.info('logging images...')
-    writer.add_histogram('values', pred_depth.detach().cpu().numpy(), epoch)
     fig = viz.show_batch({**data, 'pred': pred_depth.detach()})
     fig.suptitle(f'step {epoch}', fontsize='xx-large')
     writer.add_figure(tag='epoch/end', figure=fig, global_step=epoch)
-    writer.add_images('images', data['image'], epoch)
     writer.add_images('masks/gt', data['depth'].unsqueeze(1), epoch)
     writer.add_images('masks/pred', pred_depth.unsqueeze(1), epoch)
 

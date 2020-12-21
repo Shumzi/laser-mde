@@ -16,17 +16,17 @@ model:
   lr: 1.e-2
 train:
   batch_size: 4
-  epochs: 10
-  subset_size:
+  epochs: 4
+  subset_size: 20
   val_round: True
   val_percent: 0.2
-  run_name: 'full_net_w_val_rmsle'
+  run_name: 'crap'
   print_every: 1
   save: True
   foldername: ../models/
   # data_augmentation: # TODO: data augement.
   #   horizontal_flip: True
 evaluate: # TODO: actually take eval into account.
-  batch_size: 50
+  batch_size: 10
   hist: False
 verbose: True
