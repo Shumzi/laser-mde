@@ -20,6 +20,7 @@ import cProfile
 logger = logging.getLogger(__name__)
 if cfg['verbose']:
     logger.setLevel(logging.INFO)
+    logging.basicConfig(level=logging.INFO)
 
 # task = Task.init(project_name='mde', task_name='test loop')
 # logger = task.get_logger()
@@ -71,7 +72,6 @@ def train():
                 img, gt_depth = data['image'], data['depth']
                 loss, pred_depth = step(criterion, img, gt_depth, net, optimizer)
                 loss_val = loss.item()
-                logger.info(f'loss: {loss_val}')
                 pbar.set_postfix(**{'loss (batch)': loss_val})
                 running_loss += loss_val
                 pbar.update()
@@ -83,10 +83,12 @@ def train():
                 else:
                     val_score = None
                 print_stats(net, data, epoch, val_score,
-                            pred_depth, running_loss, writer) 
+                            pred_depth, running_loss, n_batches, writer)
                 running_loss = 0.0
     print('Finished Training')
     writer.close()
+    # if cfg_train['save']:
+    #     torch.save(net.state_dict(), os.path.join(cfg_train['foldername'],))
     return gt_depth, pred_depth
 
 
@@ -100,20 +102,22 @@ def step(criterion, img, gt_depth, net, optimizer):
 
 
 def print_stats(net, data, epoch, val_score,
-                pred_depth, running_loss, writer):
+                pred_depth, running_loss, n_batches, writer):
 
     print_every = cfg['train']['print_every']
-    writer.add_scalar('Loss/train', running_loss / print_every, epoch + 1)
-    logger.warning('\ntrain loss: {}'.format(running_loss / print_every))
+    writer.add_scalar('Loss/train', running_loss / (print_every * n_batches), epoch + 1)
+    logger.warning('\ntrain loss: {}'.format(running_loss / (print_every * n_batches)))
 
     if val_score is not None:
-        writer.add_scalar('Metric/test', val_score, epoch)
+        writer.add_scalar('Loss/val', val_score, epoch)
         logger.warning('\nValidation loss (metric?): {}'.format(val_score))
 
-    for tag, value in net.named_parameters():
-        tag = tag.replace('.', '/')
-        writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
-        writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
+    print_hist = cfg['evaluate']['hist']
+    if print_hist:
+        for tag, value in net.named_parameters():
+            tag = tag.replace('.', '/')
+            writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
+            writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
     logger.info('logging images...')
     writer.add_histogram('values', pred_depth.detach().cpu().numpy(), epoch)
     fig = viz.show_batch({**data, 'pred': pred_depth.detach()})
@@ -127,16 +131,26 @@ def print_stats(net, data, epoch, val_score,
 def get_net():
     cfg_model = cfg['model']
     model_name = cfg_model['name'].lower()
+    use_saved = cfg_model['use_saved']
     if model_name == 'unet':
         net = UNet()
     elif model_name == 'toynet':
         net = model.toyNet()
+    if use_saved:
+        logger.info('using saved model params')
+        path = cfg_model['path']
+        net.load_state_dict(torch.load(path))
     net.to(device=get_dev())
     print('using ', get_dev())
     if cfg_model['weight_init']:
         net.apply(weight_init)
     # TODO: use loss in configs for loss.
-    criterion = nn.MSELoss()
+    loss_func = cfg_model['loss'].lower()
+    if loss_func.startswith('rmsle'):
+        logger.info('using rmsle')
+        criterion = model.RMSLELoss()
+    elif loss_func.startswith('mse'):
+        criterion = nn.MSELoss()
     optimizer = optim.Adam(net.parameters(), lr=cfg_model['lr'])
     return criterion, net, optimizer
 
@@ -144,6 +158,7 @@ def get_net():
 def get_loaders():
     cfg_train = cfg['train']
     batch_size = cfg_train['batch_size']
+    batch_size_val = cfg['evaluate']['batch_size']
     val_percent = cfg_train['val_percent']
     subset_size = cfg_train['subset_size']
     ds = FarsightDataset(transform=ToTensor())
@@ -162,7 +177,7 @@ def get_loaders():
                               num_workers=0)
     val_loader = DataLoader(val_split,
                             shuffle=False,
-                            batch_size=batch_size,
+                            batch_size=batch_size_val,
                             num_workers=0)
     return train_loader, val_loader
 

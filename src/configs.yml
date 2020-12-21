@@ -5,23 +5,28 @@ dataset:
   img_foldername: img
 model:
   use_cuda: True
+  use_saved: False
+  path: ../models/
   weight_init: True
   name: UNet
   use_bn: True
-  # loss: # TODO: use loss in get_net.
+  loss: rmsle
   # randomdata?
   # shuffledata?
   lr: 1.e-2
 train:
   batch_size: 4
-  epochs: 100
-  subset_size: 200
+  epochs: 10
+  subset_size:
   val_round: True
   val_percent: 0.2
-  run_name: ''
+  run_name: 'full_net_w_val_rmsle'
   print_every: 1
+  save: True
+  foldername: ../models/
   # data_augmentation: # TODO: data augement.
   #   horizontal_flip: True
 evaluate: # TODO: actually take eval into account.
-  batch_size: 50 
+  batch_size: 50
+  hist: False
 verbose: True

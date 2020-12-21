@@ -70,8 +70,10 @@ class ToTensor(object):
         # same problem with depth. depth is in bins of 4m, max 250 (1000m). Moving to [0..1] 
         depth = (depth.astype(np.float32) / 250)[:-1, :-1]
         # depth is just H X W, so no problem here.
-        return {'image': torch.from_numpy(image).to(device=dev),
-                'depth': torch.from_numpy(depth).to(device=dev),
+        image_tensor = torch.from_numpy(image).to(device=dev)
+        depth_tensor = torch.from_numpy(depth).to(device=dev)
+        return {'image': image_tensor,
+                'depth': depth_tensor,
                 'name': sample['name']}
 
 
@@ -90,7 +92,8 @@ if __name__ == '__main__':
         # observe 4th batch and stop.
         if i_batch == 3:
             fig = plt.figure()
-            viz.show_batch(sample_batched)
+            viz.show_batch({**sample_batched,
+                            'disp': sample_batched['depth']-sample_batched['depth']})
             plt.title('hi')
             # plt.axis('off')
             plt.show()
