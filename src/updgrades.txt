@@ -1,3 +1,0 @@
-colorbar for viz?
-lr decay on plateau
-easy hyperparam opt.

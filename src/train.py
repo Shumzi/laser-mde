@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 if cfg['verbose']:
     logger.setLevel(logging.INFO)
     logging.basicConfig(level=logging.INFO)
+
 
 # task = Task.init(project_name='mde', task_name='test loop')
 # logger = task.get_logger()
@@ -53,20 +55,26 @@ def train():
     logger.info('getting params, dataloaders, etc...')
     cfg_train = cfg['train']
     epochs = cfg_train['epochs']
-    run_name = cfg_train['run_name']
+
     print_every = cfg_train['print_every']
-    writer = SummaryWriter(comment=run_name)
+    save_every = cfg_train['save_every']
+    folder_name = get_folder_name()
+    writer = SummaryWriter(os.path.join('runs', folder_name))
 
     train_loader, val_loader = get_loaders()
     n_batches = len(train_loader)
     # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
     criterion, net, optimizer = get_net()
-
+    if cfg['model']['use_saved']:
+        net, optimizer, epoch_start, running_loss = load_saved_model(net, optimizer)
+        epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
+    else:
+        epoch_start = 0
+    running_loss = 0.0
     logger.info('got all params, starting train loop')
-    for epoch in range(epochs):  # loop over the dataset multiple times
+    for epoch in range(epoch_start, epochs):  # loop over the dataset multiple times
         net.train()
-        with tqdm(total=n_batches, desc=f'Epoch {epoch + 1}/{epochs}', unit='batch') as pbar:
-            running_loss = 0.0
+        with tqdm(total=n_batches, desc=f'Epoch {epoch}/{epochs}', unit='batch') as pbar:
             for data in train_loader:
                 # get the inputs; data is a list of [input images, depth maps]
                 img, gt_depth = data['image'], data['depth']
@@ -85,16 +93,41 @@ def train():
                 print_stats(net, data, epoch, val_score,
                             pred_depth, running_loss, n_batches, writer)
                 running_loss = 0.0
+            if save_every is not None and (epoch % save_every == save_every - 1):
+                if cfg_train['save']:
+                    save_checkpoint(epoch, net, optimizer, running_loss)
     print('Finished Training')
     writer.close()
+    # TODO: graceful death - checkpoint when exiting run as well.
     if cfg_train['save']:
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': net.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': loss,
-        }, os.path.join(cfg_train['foldername'], run_name + '.pt'))
-    return gt_depth, pred_depth
+        save_checkpoint(epochs, net, optimizer, 0)
+
+
+def get_folder_name():
+    """
+
+    Returns: folder name in which to save tensorboard run and model checkpoints.
+
+    """
+    cfg_fn = cfg['train']['foldername']
+    if cfg_fn is not None:
+        return cfg_fn
+    run_name = cfg['train']['run_name']
+    cur_time = datetime.now().strftime("%m_%d_%H-%M-%S")
+    return cur_time + '_' + run_name
+
+
+def save_checkpoint(epoch, net, optimizer, running_loss):
+    logging.info(f'saving checkpoint at epoch {epoch}...')
+    folder_name = get_folder_name()
+    run_name = cfg['train']['run_name']
+    path = os.path.join('../models', folder_name, 'epoch' + str(epoch) + '.pt')
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': net.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': running_loss
+    }, path)
 
 
 def step(criterion, img, gt_depth, net, optimizer):
@@ -108,14 +141,13 @@ def step(criterion, img, gt_depth, net, optimizer):
 
 def print_stats(net, data, epoch, val_score,
                 pred_depth, running_loss, n_batches, writer):
-
     print_every = cfg['train']['print_every']
     writer.add_scalar('Loss/train', running_loss / (print_every * n_batches), epoch + 1)
     logger.warning('\ntrain loss: {}'.format(running_loss / (print_every * n_batches)))
 
     if val_score is not None:
         writer.add_scalar('Loss/val', val_score, epoch)
-        logger.warning('\nValidation loss (metric?): {}'.format(val_score))
+        logger.warning(f'\nValidation loss: {val_score}')
 
     print_hist = cfg['evaluate']['hist']
     if print_hist:
@@ -126,34 +158,36 @@ def print_stats(net, data, epoch, val_score,
         writer.add_histogram('values', pred_depth.detach().cpu().numpy(), epoch)
     logger.info('logging images...')
     fig = viz.show_batch({**data, 'pred': pred_depth.detach()})
-    fig.suptitle(f'step {epoch}', fontsize='xx-large')
+    fig.suptitle(f'epoch {epoch}', fontsize='xx-large')
     writer.add_figure(tag='epoch/end', figure=fig, global_step=epoch)
-    writer.add_images('masks/gt', data['depth'].unsqueeze(1), epoch)
-    writer.add_images('masks/pred', pred_depth.unsqueeze(1), epoch)
+    # writer.add_images('masks/gt', data['depth'].unsqueeze(1), epoch)
+    # writer.add_images('masks/pred', pred_depth.unsqueeze(1), epoch)
 
 
 def get_net():
+    """
+    get objects for training the network.
+    Returns:
+        criterion: loss function for optimization.
+        net: the network being used for training.
+        optimizer:  optimization object (nn.optim)
+    """
     cfg_model = cfg['model']
     model_name = cfg_model['name'].lower()
-    use_saved = cfg_model['use_saved']
     if model_name == 'unet':
         net = UNet()
     elif model_name == 'toynet':
         net = model.toyNet()
-    if use_saved:
-        logger.info('using saved model params')
-        path = cfg_model['path']
-        net.load_state_dict(torch.load(path))
+    if cfg_model['weight_init'] and not cfg_model['use_saved']:
+        net.apply(weight_init)
     net.to(device=get_dev())
     print('using ', get_dev())
-    if cfg_model['weight_init']:
-        net.apply(weight_init)
     # TODO: use loss in configs for loss.
-    loss_func = cfg_model['loss'].lower()
-    if loss_func.startswith('rmsle'):
+    loss_func_name = cfg_model['loss'].lower()
+    if loss_func_name.startswith('rmsle'):
         logger.info('using rmsle')
         criterion = model.RMSLELoss()
-    elif loss_func.startswith('mse'):
+    elif loss_func_name.startswith('mse'):
         criterion = nn.MSELoss()
     optimizer = optim.Adam(net.parameters(), lr=cfg_model['lr'])
     return criterion, net, optimizer
@@ -172,9 +206,9 @@ def get_loaders():
     n_train = len(ds) - n_val
     train_split, val_split = random_split(ds,
                                           [n_train, n_val],
-                                          generator=torch.Generator().manual_seed(42)) 
-                                          # TODO: check rnd. gen is consistent.
-                                          # TODO: make optional to use manual seed or random at some point. (same for DL?)
+                                          generator=torch.Generator().manual_seed(42))
+    # TODO: check rnd. gen is consistent.
+    # TODO: make optional to use manual seed or random at some point. (same for DL?)
     train_loader = DataLoader(train_split,
                               shuffle=False,
                               batch_size=batch_size,
@@ -186,6 +220,23 @@ def get_loaders():
     return train_loader, val_loader
 
 
+def load_saved_model(net, optim):
+    path = cfg['model']['path']
+    if not path.endswith('.pt'):
+        # default to last trained model.
+        path = path + os.listdir(path)[-1]
+    logging.info(f'loading from {path}')
+    checkpoint = torch.load(path)
+    net.load_state_dict(checkpoint['model_state_dict'])
+    optim.load_state_dict(checkpoint['optimizer_state_dict'])
+    epoch = checkpoint['epoch']
+    loss = checkpoint['loss']
+    return net, optim, epoch, loss
+
+
 if __name__ == '__main__':
     train()
+
+    # criterion, net, optim = get_net()
+
     # cProfile.run('train()', sort='tottime')

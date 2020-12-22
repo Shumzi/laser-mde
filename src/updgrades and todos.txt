@@ -1,0 +1,28 @@
+load from same model folder if you started from a checkpoint.
+
+
+
+
+colorbar for viz?
+lr decay on plateau
+easy hyperparam opt.
+
+itamar:
+metrics
+training process, false analysis with nb.
+augementation - add tashtit. flip, brightness, color variation,
+crop scale.
+save models.
+
+tomorrow:
+load models.
+train again
+augmentations infrustructure -
+nb for analysis
+add gradient metric.
+
+
+go over runs, delete what isn't interesting, connect between run and model trained.
+make the configs file less shit.
+foldername AND run_name? what's wrong with you..
+should eval_net be in train?

@@ -77,6 +77,29 @@ class ToTensor(object):
                 'name': sample['name']}
 
 
+class HorizontalFlip:
+    """flip tensors and return both original and augmentation."""
+    # TODO: testing..
+    def __call__(self, sample):
+        image, depth = sample['image'], sample['depth']
+        dev = defs.get_dev()
+        # image = N X C X H X W, changing to N X C X H X W[::-1]
+        image_flip = image[..., ::-1]
+        depth_flip = depth[..., ::-1]
+        sample['image'] = torch.cat(image, image_flip)
+        sample['depth'] = torch.cat(depth, depth_flip)
+        return sample
+
+
+class BrightnessGames:
+    """change image brighness of tensors slightly."""
+    # TODO: read a bit about brightness shifts, work on it.
+    pass
+
+
+class CropImage:
+    pass
+
 if __name__ == '__main__':
     """
     basic test to see that the dataloader works ok.
@@ -93,7 +116,7 @@ if __name__ == '__main__':
         if i_batch == 3:
             fig = plt.figure()
             viz.show_batch({**sample_batched,
-                            'disp': sample_batched['depth']-sample_batched['depth']})
+                            'disp': sample_batched['depth'] - sample_batched['depth']})
             plt.title('hi')
             # plt.axis('off')
             plt.show()
