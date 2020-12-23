@@ -15,7 +15,7 @@ import model
 import visualize as viz
 from data_loader import FarsightDataset, ToTensor
 from other_models.tiny_unet import UNet
-from utils import get_depth_dir, get_img_dir, get_dev, cfg
+from utils import get_depth_dir, get_img_dir, get_dev, cfg, current_time
 import cProfile
 
 logger = logging.getLogger(__name__)
@@ -113,21 +113,24 @@ def get_folder_name():
     if cfg_fn is not None:
         return cfg_fn
     run_name = cfg['train']['run_name']
-    cur_time = datetime.now().strftime("%m_%d_%H-%M-%S")
+    cur_time = current_time.strftime("%m_%d_%H-%M-%S")
     return cur_time + '_' + run_name
 
 
 def save_checkpoint(epoch, net, optimizer, running_loss):
     logging.info(f'saving checkpoint at epoch {epoch}...')
-    folder_name = get_folder_name()
+    folder = get_folder_name()
     run_name = cfg['train']['run_name']
-    path = os.path.join('../models', folder_name, 'epoch' + str(epoch) + '.pt')
+    folder = os.path.join('../models', folder)
+    filename = 'epoch' + str(epoch) + '.pt'
+    if not os.path.exists(folder):
+        os.mkdir(folder)
     torch.save({
         'epoch': epoch,
         'model_state_dict': net.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'loss': running_loss
-    }, path)
+    }, os.path.join(folder, filename))
 
 
 def step(criterion, img, gt_depth, net, optimizer):

@@ -6,7 +6,7 @@ dataset:
 model:
   use_cuda: True
   use_saved: False
-  path: ../models/ # default to take last model trained.
+  path:  # default to take last model trained.
   weight_init: True
   name: UNet
   use_bn: True

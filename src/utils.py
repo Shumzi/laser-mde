@@ -3,7 +3,7 @@ from os import system, name
 from pathlib import Path
 import torch
 import yaml
-
+from datetime import datetime
 
 class Singleton(type):
     _instances = {}
@@ -31,7 +31,7 @@ class ConfigHandler(metaclass=Singleton):
 
 
 cfg = ConfigHandler()
-
+current_time = datetime.now()
 
 def get_depth_dir():
     """

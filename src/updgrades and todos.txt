@@ -1,8 +1,5 @@
 load from same model folder if you started from a checkpoint.
 
-
-
-
 colorbar for viz?
 lr decay on plateau
 easy hyperparam opt.
