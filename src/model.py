@@ -69,6 +69,7 @@ def eval_net(net, loader, metric, writer, step):
                 pred_depths = net(imgs)
             score += metric(pred_depths, gt_depths)
             if i == n_val - 1:
+                # fig = viz.show_batch({**batch, 'pred': pred_depths})
                 writer.add_images('val/pred', pred_depths.unsqueeze(1), step)
                 writer.add_images('val/gt', gt_depths.unsqueeze(1), step)
             pbar.update()

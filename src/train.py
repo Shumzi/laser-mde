@@ -1,7 +1,5 @@
 import logging
 import os
-import sys
-from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -15,8 +13,7 @@ import model
 import visualize as viz
 from data_loader import FarsightDataset, ToTensor
 from other_models.tiny_unet import UNet
-from utils import get_depth_dir, get_img_dir, get_dev, cfg, current_time
-import cProfile
+from utils import get_dev, cfg, current_time
 
 logger = logging.getLogger(__name__)
 if cfg['verbose']:
@@ -41,7 +38,6 @@ def weight_init(m):
 
     """
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-        m.weight.data
         nn.init.kaiming_normal_(m.weight.data, nonlinearity='relu')
         nn.init.zeros_(m.bias)
 
@@ -66,7 +62,7 @@ def train():
     # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
     criterion, net, optimizer = get_net()
     if cfg['model']['use_saved']:
-        net, optimizer, epoch_start, running_loss = load_saved_model(net, optimizer)
+        net, optimizer, epoch_start, running_loss = load_checkpoint(net, optimizer)
         epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
     else:
         epoch_start = 0
@@ -100,7 +96,7 @@ def train():
     writer.close()
     # TODO: graceful death - checkpoint when exiting run as well.
     if cfg_train['save']:
-        save_checkpoint(epochs, net, optimizer, 0)
+        save_checkpoint(epochs-1, net, optimizer, 0)
 
 
 def get_folder_name():
@@ -109,9 +105,13 @@ def get_folder_name():
     Returns: folder name in which to save tensorboard run and model checkpoints.
 
     """
-    cfg_fn = cfg['train']['foldername']
-    if cfg_fn is not None:
-        return cfg_fn
+    use_saved = cfg['model']['use_saved']
+    if use_saved:
+        folder_name = cfg['model']['path']
+        if folder_name.endswith('.pt'):
+            return '/'.join(folder_name.split('/')[:-1])
+        else:
+            return folder_name
     run_name = cfg['train']['run_name']
     cur_time = current_time.strftime("%m_%d_%H-%M-%S")
     return cur_time + '_' + run_name
@@ -120,17 +120,20 @@ def get_folder_name():
 def save_checkpoint(epoch, net, optimizer, running_loss):
     logging.info(f'saving checkpoint at epoch {epoch}...')
     folder = get_folder_name()
-    run_name = cfg['train']['run_name']
     folder = os.path.join('../models', folder)
-    filename = 'epoch' + str(epoch) + '.pt'
+    filename = 'epoch_' + str(epoch).zfill(4) + '.pt'
     if not os.path.exists(folder):
         os.mkdir(folder)
+    full_path = os.path.join(folder, filename)
+    if os.path.exists(full_path):
+        logger.warning(f'not saving {full_path} as it already exists.')
+        return
     torch.save({
         'epoch': epoch,
         'model_state_dict': net.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'loss': running_loss
-    }, os.path.join(folder, filename))
+    }, full_path)
 
 
 def step(criterion, img, gt_depth, net, optimizer):
@@ -181,6 +184,8 @@ def get_net():
         net = UNet()
     elif model_name == 'toynet':
         net = model.toyNet()
+    else:
+        raise ValueError("can only use UNET or toynet.")
     if cfg_model['weight_init'] and not cfg_model['use_saved']:
         net.apply(weight_init)
     net.to(device=get_dev())
@@ -192,6 +197,8 @@ def get_net():
         criterion = model.RMSLELoss()
     elif loss_func_name.startswith('mse'):
         criterion = nn.MSELoss()
+    else:
+        raise ValueError("can only use rmsle or mse")
     optimizer = optim.Adam(net.parameters(), lr=cfg_model['lr'])
     return criterion, net, optimizer
 
@@ -223,11 +230,11 @@ def get_loaders():
     return train_loader, val_loader
 
 
-def load_saved_model(net, optim):
-    path = cfg['model']['path']
+def load_checkpoint(net, optim):
+    path = os.path.join('..', 'models', cfg['model']['path'])
     if not path.endswith('.pt'):
         # default to last trained model.
-        path = path + os.listdir(path)[-1]
+        path = os.path.join(path, os.listdir(path)[-1])
     logging.info(f'loading from {path}')
     checkpoint = torch.load(path)
     net.load_state_dict(checkpoint['model_state_dict'])
