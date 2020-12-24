@@ -10,11 +10,14 @@ import random
 import os
 import torch
 # import pandas as pd
-from skimage import io, transform
+from skimage import io
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader, Subset
 from torchvision import transforms, utils
+from torchvision.transforms import functional as TF
+from itertools import groupby
+import pandas as pd
 
 
 class FarsightDataset(Dataset):
@@ -77,47 +80,126 @@ class ToTensor(object):
                 'name': sample['name']}
 
 
-class HorizontalFlip:
-    """flip tensors and return both original and augmentation."""
-    # TODO: testing..
+class RandomHorizontalFlip:
+    """
+    flips image and its depth with probability p.
+    """
+    def __init__(self, p=0.5):
+        self.p = p
+
     def __call__(self, sample):
-        image, depth = sample['image'], sample['depth']
-        dev = defs.get_dev()
-        # image = N X C X H X W, changing to N X C X H X W[::-1]
-        image_flip = image[..., ::-1]
-        depth_flip = depth[..., ::-1]
-        sample['image'] = torch.cat(image, image_flip)
-        sample['depth'] = torch.cat(depth, depth_flip)
+        if random.random() < self.p:
+            img, depth = sample['image'], sample['depth']
+            img = TF.hflip(img)
+            depth = TF.hflip(depth)
+            sample['image'] = img
+            sample['depth'] = depth
         return sample
 
 
-class BrightnessGames:
-    """change image brighness of tensors slightly."""
-    # TODO: read a bit about brightness shifts, work on it.
-    pass
+class RandomColorJitter:
+    """
+    jitter colors of img, but not depth.
+    """
+
+    def __call__(self, sample):
+        sample['image'] = transforms.ColorJitter().forward(sample['image'])
+        return sample
 
 
-class CropImage:
-    pass
+class RandomGaussianBlur:
+    """
+    blur image with small gaussian blur (depth stays the same).
+    """
+    def __init__(self, p=0.5):
+        """
+        initialize probability with which to add blur.
+        Args:
+            p: float, probability for blurring.
+        """
+        self.p = p
+
+    def __call__(self, sample):
+        if random.random() < self.p:
+            sample['image'] = transforms.GaussianBlur(3).forward(sample['image'])
+        return sample
+
+class RandomGaussianNoise:
+    pass #TODO: rndgaussiannoise.
+
+
+def get_farsight_fold_dataset(fold, transform=ToTensor()):
+    """
+    creates a train and val dataset,
+    with the fold being which scene is used as val.
+    Args:
+        fold: int, scene no. to be used as val.
+        transform: transform object for dataset.
+    Returns: train_dataset, val_dataset
+
+    """
+    assert fold < 4, "Farsight has only 4 scenes, fold must be between 0 and 3."
+    files = [fn for fn in os.listdir(get_img_dir()) if fn.lower().endswith('.png')]
+    files.sort()
+    files_df = pd.DataFrame(files, columns=['filename'])
+    files_df['city'] = files_df['filename'].apply(lambda x: x.split(sep='_')[0])
+    full_ds = FarsightDataset(transform)
+    train_idxs = []
+    val_idxs = []
+    for i, (_, g) in enumerate(files_df.groupby('city')):
+        if i == fold:
+            val_idxs += list(g.index.values)
+        else:
+            train_idxs += list(g.index.values)
+    val_ds = Subset(full_ds, val_idxs)
+    train_ds = Subset(full_ds, train_idxs)
+    return train_ds, val_ds
+
+
+# transforms.ColorJitter(brightness=0, contrast=0, saturation=0, hue=0)
+
+# transforms.RandomHorizontalFlip(p=0.5)
+
+# transforms.GaussianBlur(kernel_size, sigma=(0.1, 2.0))
+
 
 if __name__ == '__main__':
     """
     basic test to see that the dataloader works ok.
     """
-    dataloader = DataLoader(FarsightDataset(transform=ToTensor()),
-                            batch_size=4, shuffle=True, num_workers=0)
-
-    for i_batch, sample_batched in enumerate(dataloader):
-        print('batch #{}, img size: {}, depth size: {}'.format(i_batch,
-                                                               sample_batched['image'].size(),
-                                                               sample_batched['depth'].size()))
-
-        # observe 4th batch and stop.
-        if i_batch == 3:
-            fig = plt.figure()
-            viz.show_batch({**sample_batched,
-                            'disp': sample_batched['depth'] - sample_batched['depth']})
-            plt.title('hi')
-            # plt.axis('off')
-            plt.show()
-            break
+    tforms = transforms.Compose([
+        ToTensor(),
+        RandomHorizontalFlip(),
+        RandomColorJitter(),
+        RandomGaussianBlur()
+    ])
+    t, v = get_farsight_fold_dataset(0, tforms)
+    t_loader = DataLoader(t, batch_size=4)
+    v_loader = DataLoader(v, batch_size=4)
+    for i_batch, sample_batched in enumerate(t_loader):
+        viz.show_batch(sample_batched)
+        plt.title('train')
+        plt.show()
+        break
+    for batch in v_loader:
+        viz.show_batch(batch)
+        plt.title('test')
+        plt.show()
+        break
+    # dataloader = DataLoader(FarsightDataset(transform=ToTensor()),
+    #                         batch_size=4, shuffle=True, num_workers=0)
+    #
+    # for i_batch, sample_batched in enumerate(dataloader):
+    #     print('batch #{}, img size: {}, depth size: {}'.format(i_batch,
+    #                                                            sample_batched['image'].size(),
+    #                                                            sample_batched['depth'].size()))
+    #
+    #     # observe 4th batch and stop.
+    #     if i_batch == 3:
+    #         fig = plt.figure()
+    #         viz.show_batch({**sample_batched,
+    #                         'disp': sample_batched['depth'] - sample_batched['depth']})
+    #         plt.title('hi')
+    #         # plt.axis('off')
+    #         plt.show()
+    #         break

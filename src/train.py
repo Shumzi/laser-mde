@@ -238,6 +238,7 @@ def get_net():
 
 def get_loaders():
     """
+    get dataloaders for train and val,
 
     Returns: train_loader and val_loader (pytorch dataloaders).
 
@@ -250,11 +251,14 @@ def get_loaders():
     ds = FarsightDataset(transform=ToTensor())
     if subset_size is not None:
         ds = Subset(ds, range(subset_size))
-    n_val = int(len(ds) * val_percent)
-    n_train = len(ds) - n_val
-    train_split, val_split = random_split(ds,
-                                          [n_train, n_val],
-                                          generator=torch.Generator().manual_seed(42))
+        n_val = int(len(ds) * val_percent)
+        n_train = len(ds) - n_val
+        train_split, val_split = cities(ds)
+        train_split, val_split = random_split(ds,
+                                              [n_train, n_val],
+                                              generator=torch.Generator().manual_seed(42))
+
+
     # TODO: check rnd. gen is consistent.
     # TODO: make optional to use manual seed or random at some point. (same for DL?)
     train_loader = DataLoader(train_split,

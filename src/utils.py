@@ -33,6 +33,7 @@ class ConfigHandler(metaclass=Singleton):
 cfg = ConfigHandler()
 current_time = datetime.now()
 
+
 def get_depth_dir():
     """
 
