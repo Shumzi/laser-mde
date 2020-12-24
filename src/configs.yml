@@ -5,8 +5,8 @@ dataset:
   img_foldername: img
 model:
   use_cuda: True
-  use_saved: True
-  path:  12_23_15-00-03_full_100ep/epoch_0109.pt
+  use_saved: False
+  path:  12_23_15-00-03_full_100ep/
   weight_init: True
   name: UNet
   use_bn: True
@@ -16,13 +16,13 @@ model:
   lr: 1.e-2
 train:
   batch_size: 4
-  epochs: 1000
-  subset_size:
+  epochs: 10
+  subset_size: 20
   val_round: True
   val_percent: 0.2
-  run_name: 'full_100ep'
-  print_every: 10
-  save: True
+  run_name: 'test'
+  print_every: 1
+  save: False
   save_every: 10
   # data_augmentation: # TODO: data augement.
   #   horizontal_flip: True

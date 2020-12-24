@@ -62,6 +62,7 @@ def eval_net(net, loader, metric, writer, step):
     net.eval()
     n_val = len(loader)
     score = 0
+    val_sample = {}
     with tqdm(total=n_val, desc='Validation round', unit='batch', leave=False) as pbar:
         for i, batch in enumerate(loader):
             imgs, gt_depths = batch['image'], batch['depth']
@@ -69,13 +70,14 @@ def eval_net(net, loader, metric, writer, step):
                 pred_depths = net(imgs)
             score += metric(pred_depths, gt_depths)
             if i == n_val - 1:
+                val_sample.update({**batch, 'pred': pred_depths})
                 # fig = viz.show_batch({**batch, 'pred': pred_depths})
-                writer.add_images('val/pred', pred_depths.unsqueeze(1), step)
-                writer.add_images('val/gt', gt_depths.unsqueeze(1), step)
+                # writer.add_images('val/pred', pred_depths.unsqueeze(1), step)
+                # writer.add_images('val/gt', gt_depths.unsqueeze(1), step)
             pbar.update()
     score /= n_val
     net.train()
-    return score
+    return score, val_sample
 
 
 class RMSLELoss(nn.Module):
