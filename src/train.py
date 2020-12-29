@@ -4,16 +4,18 @@ import os
 import torch
 import torch.nn as nn
 from torch import optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Subset, random_split
 from torch.utils.tensorboard import SummaryWriter
 # from trains import Task
 from tqdm import tqdm
-
+from matplotlib import pyplot as plt
 import model
 import visualize as viz
-from data_loader import FarsightDataset, ToTensor
+from data_loader import FarsightDataset, ToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
 from utils import get_dev, cfg, current_time
+from random import shuffle
 
 logger = logging.getLogger(__name__)
 if cfg['verbose']:
@@ -56,11 +58,12 @@ def train():
     save_every = cfg_train['save_every']
     folder_name = get_folder_name()
     writer = SummaryWriter(os.path.join('runs', folder_name))
-
     train_loader, val_loader = get_loaders()
     n_batches = len(train_loader)
     # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
     criterion, net, optimizer = get_net()
+    old_lr = optimizer.param_groups[0]['lr']
+    scheduler = ReduceLROnPlateau(optimizer, mode='min')
     if cfg['model']['use_saved']:
         net, optimizer, epoch_start, running_loss = load_checkpoint(net, optimizer)
         epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
@@ -75,17 +78,21 @@ def train():
                 # get the inputs; data is a list of [input images, depth maps]
                 img, gt_depth = data['image'], data['depth']
                 loss, pred_depth = step(criterion, img, gt_depth, net, optimizer)
-                loss_val = loss.item()
-                pbar.set_postfix(**{'loss (batch)': loss_val})
-                running_loss += loss_val
+                loss_value = loss.item()
+                pbar.set_postfix(**{'loss (batch)': loss_value})
+                running_loss += loss_value
                 pbar.update()
-
+            if cfg_train['val_round']:
+                val_score, val_sample = model.eval_net(net, val_loader, criterion)
+                # scheduler.step(val_score)  # possibly plateau LR.
+                # new_lr = optimizer.param_groups[0]['lr']
+                # if old_lr != new_lr:
+                #     print(fr'old lr: {old_lr}, new lr: {new_lr}')
+                # old_lr = new_lr
             if epoch % print_every == print_every - 1:
-                if cfg_train['val_round']:
-                    val_score, val_sample = model.eval_net(net, val_loader, criterion, writer, epoch)
-                    # TODO: maybe add train_val
-                else:
-                    val_score = None
+                #     # TODO: maybe add train_val
+                # else:
+                #     val_score = None
                 train_loss = running_loss / (print_every * n_batches)
                 train_sample = {**data, 'pred': pred_depth}
                 print_stats(train_sample, val_sample,
@@ -126,7 +133,8 @@ def save_checkpoint(epoch, net, optimizer, running_loss):
     Args:
         epoch: int.
         net: network object (only weights are saved).
-        optimizer: optimizer object (only weights are saved).
+        optimizer
+    # TODO: check rnd. gen is consistent.: optimizer object (only weights are saved).
         running_loss: float, current loss (for possibly future use).
 
     Returns: None (checkpoint saved).
@@ -196,9 +204,11 @@ def print_stats(train_sample, val_sample,
     logger.info('logging images...')
     fig = viz.show_batch(train_sample)
     fig.suptitle(f'train, epoch {epoch}', fontsize='xx-large')
+    # plt.show()
     writer.add_figure(tag='viz/train', figure=fig, global_step=epoch)
     fig = viz.show_batch(val_sample)
     fig.suptitle(f'val, epoch {epoch}', fontsize='xx-large')
+    # plt.show()
     writer.add_figure(tag='viz/val', figure=fig, global_step=epoch)
 
 
@@ -248,17 +258,22 @@ def get_loaders():
     batch_size_val = cfg['evaluate']['batch_size']
     val_percent = cfg_train['val_percent']
     subset_size = cfg_train['subset_size']
-    ds = FarsightDataset(transform=ToTensor())
-    if subset_size is not None:
-        ds = Subset(ds, range(subset_size))
+    if cfg_train['use_folds']:
+        train_split, val_split = get_farsight_fold_dataset(0)
+        if subset_size is not None:
+            train_size = int(subset_size * (1 - val_percent))
+            val_size = int(subset_size * val_percent)
+            train_split = Subset(train_split, range(train_size))
+            val_split = Subset(val_split, range(val_size))
+    else:
+        ds = FarsightDataset(transform=ToTensor())
+        if subset_size is not None:
+            ds = Subset(ds, range(subset_size))
         n_val = int(len(ds) * val_percent)
         n_train = len(ds) - n_val
-        train_split, val_split = cities(ds)
         train_split, val_split = random_split(ds,
                                               [n_train, n_val],
                                               generator=torch.Generator().manual_seed(42))
-
-
     # TODO: check rnd. gen is consistent.
     # TODO: make optional to use manual seed or random at some point. (same for DL?)
     train_loader = DataLoader(train_split,

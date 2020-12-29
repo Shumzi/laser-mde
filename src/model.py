@@ -46,7 +46,7 @@ class WeightValues(nn.Module):
         return x
 
 
-def eval_net(net, loader, metric, writer, step):
+def eval_net(net, loader, metric):
     """
     Validation stage in the training loop.
 
@@ -54,8 +54,6 @@ def eval_net(net, loader, metric, writer, step):
         net: network being trained
         loader: data loader of validation data
         metric: metric to test validation upon.
-        writer: SummaryWriter for tensorboard.
-        step: int, global step no. for tensorboard.
     Returns: score of eval based on criterion.
 
     """

@@ -5,25 +5,23 @@ import sys
 from utils import get_depth_dir, get_img_dir
 import utils as defs
 import visualize as viz
-# load and display an image with Matplotlib
 import random
 import os
 import torch
-# import pandas as pd
 from skimage import io
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader, Subset
 from torchvision import transforms, utils
 from torchvision.transforms import functional as TF
-from itertools import groupby
 import pandas as pd
+from random import shuffle
 
-
+cfg_aug = defs.cfg['train']['data_augmentation']
 class FarsightDataset(Dataset):
     """Farsight dataset with (img,depth) pairs."""
 
-    def __init__(self, transform=None):
+    def __init__(self, transform=None, filenames=None):
         """
         Args:
             transform (callable, optional): Optional transform to be applied
@@ -32,7 +30,10 @@ class FarsightDataset(Dataset):
         self.img_dir = get_img_dir()
         self.depth_dir = get_depth_dir()
         self.transform = transform
-        self.filenames = np.array([fn for fn in os.listdir(self.img_dir) if fn.lower().endswith('.png')])
+        if filenames is None:
+            self.filenames = np.array([fn for fn in os.listdir(self.img_dir) if fn.lower().endswith('.png')])
+        else:
+            self.filenames = filenames
         self.filenames.sort()
 
     def __len__(self):
@@ -84,16 +85,14 @@ class RandomHorizontalFlip:
     """
     flips image and its depth with probability p.
     """
-    def __init__(self, p=0.5):
+
+    def __init__(self, p=cfg_aug['flip_p']):
         self.p = p
 
     def __call__(self, sample):
-        if random.random() < self.p:
-            img, depth = sample['image'], sample['depth']
-            img = TF.hflip(img)
-            depth = TF.hflip(depth)
-            sample['image'] = img
-            sample['depth'] = depth
+        if cfg_aug['horizontal_flip'] and random.random() < self.p:
+            sample['image'] = TF.hflip(sample['image'])
+            sample['depth'] = TF.hflip(sample['depth'])
         return sample
 
 
@@ -103,7 +102,8 @@ class RandomColorJitter:
     """
 
     def __call__(self, sample):
-        sample['image'] = transforms.ColorJitter().forward(sample['image'])
+        if cfg_aug['color_jitter']:
+            sample['image'] = transforms.ColorJitter().forward(sample['image'])
         return sample
 
 
@@ -111,6 +111,7 @@ class RandomGaussianBlur:
     """
     blur image with small gaussian blur (depth stays the same).
     """
+
     def __init__(self, p=0.5):
         """
         initialize probability with which to add blur.
@@ -120,47 +121,60 @@ class RandomGaussianBlur:
         self.p = p
 
     def __call__(self, sample):
-        if random.random() < self.p:
+        if cfg_aug['gaussian_blur'] and random.random() < self.p:
             sample['image'] = transforms.GaussianBlur(3).forward(sample['image'])
         return sample
 
+
 class RandomGaussianNoise:
-    pass #TODO: rndgaussiannoise.
+    def __init__(self, p=0.5, std=0.01):
+        self.p = p
+        self.std = std
+
+    def __call__(self, sample):
+        if cfg_aug['gaussian_noise'] and random.random() < self.p:
+            sample['image'] = sample['image'] + torch.randn(sample['image'].size(), device=defs.get_dev()) * self.std
+            sample['image'] = torch.clamp(sample['image'], 0, 1)
+        return sample
 
 
-def get_farsight_fold_dataset(fold, transform=ToTensor()):
+def get_farsight_fold_dataset(fold, transform=None):
     """
     creates a train and val dataset,
     with the fold being which scene is used as val.
+
     Args:
-        fold: int, scene no. to be used as val.
+        fold: index, scene no. to be used as val.
         transform: transform object for dataset.
+
     Returns: train_dataset, val_dataset
 
     """
+    if transform is None:
+        transform = transforms.Compose([
+            ToTensor(),
+            RandomHorizontalFlip(),
+            RandomColorJitter(),
+            RandomGaussianBlur(),
+            RandomGaussianNoise()
+        ])
     assert fold < 4, "Farsight has only 4 scenes, fold must be between 0 and 3."
     files = [fn for fn in os.listdir(get_img_dir()) if fn.lower().endswith('.png')]
     files.sort()
     files_df = pd.DataFrame(files, columns=['filename'])
     files_df['city'] = files_df['filename'].apply(lambda x: x.split(sep='_')[0])
-    full_ds = FarsightDataset(transform)
     train_idxs = []
     val_idxs = []
     for i, (_, g) in enumerate(files_df.groupby('city')):
         if i == fold:
-            val_idxs += list(g.index.values)
+            val_idxs += list(g['filename'].values)
         else:
-            train_idxs += list(g.index.values)
-    val_ds = Subset(full_ds, val_idxs)
-    train_ds = Subset(full_ds, train_idxs)
+            train_idxs += list(g['filename'].values)
+    shuffle(val_idxs)
+    shuffle(train_idxs)
+    train_ds = FarsightDataset(transform, train_idxs)
+    val_ds = FarsightDataset(ToTensor(), val_idxs)
     return train_ds, val_ds
-
-
-# transforms.ColorJitter(brightness=0, contrast=0, saturation=0, hue=0)
-
-# transforms.RandomHorizontalFlip(p=0.5)
-
-# transforms.GaussianBlur(kernel_size, sigma=(0.1, 2.0))
 
 
 if __name__ == '__main__':
@@ -171,21 +185,22 @@ if __name__ == '__main__':
         ToTensor(),
         RandomHorizontalFlip(),
         RandomColorJitter(),
-        RandomGaussianBlur()
+        RandomGaussianBlur(),
+        RandomGaussianNoise()
     ])
-    t, v = get_farsight_fold_dataset(0, tforms)
-    t_loader = DataLoader(t, batch_size=4)
-    v_loader = DataLoader(v, batch_size=4)
-    for i_batch, sample_batched in enumerate(t_loader):
-        viz.show_batch(sample_batched)
-        plt.title('train')
+    for i in range(4):
+        t, v = get_farsight_fold_dataset(i, tforms)
+        t_loader = DataLoader(t, batch_size=4)
+        v_loader = DataLoader(v, batch_size=4)
+        t_sample = next(iter(t_loader))
+        v_sample = next(iter(v_loader))
+        viz.show_batch(t_sample)
+        plt.suptitle(f'train_{i}')
         plt.show()
-        break
-    for batch in v_loader:
-        viz.show_batch(batch)
-        plt.title('test')
+        viz.show_batch(v_sample)
+        plt.suptitle(f'val_{i}_{len(v_loader)}')
         plt.show()
-        break
+
     # dataloader = DataLoader(FarsightDataset(transform=ToTensor()),
     #                         batch_size=4, shuffle=True, num_workers=0)
     #
