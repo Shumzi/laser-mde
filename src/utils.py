@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 import yaml
 from datetime import datetime
+import random
 
 class Singleton(type):
     _instances = {}
@@ -32,6 +33,8 @@ class ConfigHandler(metaclass=Singleton):
 
 cfg = ConfigHandler()
 current_time = datetime.now()
+if cfg['random_seed'] is not None:
+    random.seed(cfg['random_seed'])
 
 def get_depth_dir():
     """
@@ -61,3 +64,20 @@ def get_dev():
     else:
         return torch.device('cpu')
 
+
+def get_folder_name():
+    """
+
+    Returns: folder name in which to save tensorboard run and model checkpoints.
+
+    """
+    use_saved = cfg['model']['use_saved']
+    if use_saved:
+        folder_name = cfg['model']['path']
+        if folder_name.endswith('.pt'):
+            return '/'.join(folder_name.split('/')[:-1])
+        else:
+            return folder_name
+    run_name = cfg['train']['run_name']
+    cur_time = current_time.strftime("%m_%d_%H-%M-%S")
+    return cur_time + '_' + run_name
