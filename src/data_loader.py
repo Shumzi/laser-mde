@@ -171,6 +171,7 @@ def get_farsight_fold_dataset(fold, transform=None):
         else:
             train_idxs += list(g['filename'].values)
     shuffle(train_idxs)
+    # TODO: make this not so shady as it is now. Maybe it's ok?
     if defs.cfg['train']['shuffle_val']:
         shuffle(val_idxs)
     train_ds = FarsightDataset(transform, train_idxs)

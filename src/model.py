@@ -8,6 +8,7 @@ import visualize as viz
 from torch.utils.tensorboard import SummaryWriter
 import math
 
+
 class Squeeze(nn.Module):
     def forward(self, x):
         return torch.squeeze(x)
@@ -79,10 +80,10 @@ def eval_net(net, loader, metric):
 
 
 class RMSLELoss(nn.Module):
-    '''
+    """
     root mean square log error.
-    Currently explodes when using small values between 0 and 1.
-    '''
+    """
+
     def __init__(self):
         super().__init__()
         self.mse = nn.MSELoss()
@@ -93,9 +94,10 @@ class RMSLELoss(nn.Module):
 
 
 class EigenDepthLoss(nn.Module):
-    '''
+    """
     eigen depth which promotes structural consistency.
-    '''
+    """
+
     def __init__(self):
         super().__init__()
         self.mse = nn.MSELoss()

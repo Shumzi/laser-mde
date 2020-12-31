@@ -1,31 +1,31 @@
 import logging
 import os
+from pathlib import Path
 
 import torch
 import torch.nn as nn
+from clearml import Task
 from torch import optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Subset, random_split
 from torch.utils.tensorboard import SummaryWriter
-from clearml import Task
 from tqdm import tqdm
-from matplotlib import pyplot as plt
+
 import model
 import visualize as viz
 from data_loader import FarsightDataset, ToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
-from utils import get_dev, cfg, current_time, get_folder_name
-from random import shuffle
-from pathlib import Path
+from utils import get_dev, cfg, get_folder_name
 
 logger = logging.getLogger(__name__)
-if cfg['verbose']:
+if cfg['misc']['verbose']:
     logger.setLevel(logging.INFO)
     logging.basicConfig(level=logging.INFO)
 
 cfg_train = cfg['train']
-cfg_save = cfg['checkpoints']
-task = Task.init(project_name='ariel-mde', task_name=get_folder_name(), continue_last_task=cfg_save['use_saved'])
+cfg_checkpoints = cfg['checkpoints']
+
+task = Task.init(project_name='ariel-mde', task_name=get_folder_name(), continue_last_task=cfg_checkpoints['use_saved'])
 clearml_logger = task.get_logger()
 config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
 
@@ -57,6 +57,7 @@ def train():
     """
     logger.info('getting params, dataloaders, etc...')
     cfg_train = cfg['train']
+
     epochs = cfg_train['epochs']
 
     print_every = cfg_train['print_every']
@@ -69,7 +70,7 @@ def train():
     criterion, net, optimizer = get_net()
     old_lr = optimizer.param_groups[0]['lr']
     scheduler = ReduceLROnPlateau(optimizer, mode='min')
-    if cfg['model']['use_saved']:
+    if cfg_checkpoints['use_saved']:
         try:
             net, optimizer, epoch_start, running_loss = load_checkpoint(net, optimizer)
             epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
@@ -222,7 +223,7 @@ def get_net():
         net = model.toyNet()
     else:
         raise ValueError("can only use UNET or toynet.")
-    if cfg_model['weight_init'] and not cfg_model['use_saved']:
+    if cfg_model['weight_init'] and not cfg_checkpoints['use_saved']:
         net.apply(weight_init)
     net.to(device=get_dev())
     print('using ', get_dev())
