@@ -32,9 +32,9 @@ class FarsightDataset(Dataset):
         self.transform = transform
         if filenames is None:
             self.filenames = np.array([fn for fn in os.listdir(self.img_dir) if fn.lower().endswith('.png')])
+            self.filenames.sort()
         else:
             self.filenames = filenames
-        self.filenames.sort()
 
     def __len__(self):
         return len(self.filenames)
@@ -170,8 +170,9 @@ def get_farsight_fold_dataset(fold, transform=None):
             val_idxs += list(g['filename'].values)
         else:
             train_idxs += list(g['filename'].values)
-    shuffle(val_idxs)
     shuffle(train_idxs)
+    if defs.cfg['train']['shuffle_val']:
+        shuffle(val_idxs)
     train_ds = FarsightDataset(transform, train_idxs)
     val_ds = FarsightDataset(ToTensor(), val_idxs)
     return train_ds, val_ds
@@ -193,13 +194,13 @@ if __name__ == '__main__':
         t_loader = DataLoader(t, batch_size=4)
         v_loader = DataLoader(v, batch_size=4)
         t_sample = next(iter(t_loader))
-        v_sample = next(iter(v_loader))
+        # v_sample = next(iter(v_loader))
         viz.show_batch(t_sample)
         plt.suptitle(f'train_{i}')
         plt.show()
-        viz.show_batch(v_sample)
-        plt.suptitle(f'val_{i}_{len(v_loader)}')
-        plt.show()
+        # viz.show_batch(v_sample)
+        # plt.suptitle(f'val_{i}_{len(v_loader)}')
+        # plt.show()
 
     # dataloader = DataLoader(FarsightDataset(transform=ToTensor()),
     #                         batch_size=4, shuffle=True, num_workers=0)

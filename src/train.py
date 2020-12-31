@@ -7,24 +7,29 @@ from torch import optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Subset, random_split
 from torch.utils.tensorboard import SummaryWriter
-# from trains import Task
+from clearml import Task
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import model
 import visualize as viz
 from data_loader import FarsightDataset, ToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
-from utils import get_dev, cfg, current_time
+from utils import get_dev, cfg, current_time, get_folder_name
 from random import shuffle
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 if cfg['verbose']:
     logger.setLevel(logging.INFO)
     logging.basicConfig(level=logging.INFO)
 
+cfg_train = cfg['train']
+cfg_save = cfg['checkpoints']
+task = Task.init(project_name='ariel-mde', task_name=get_folder_name(), continue_last_task=cfg_save['use_saved'])
+clearml_logger = task.get_logger()
+config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
 
-# task = Task.init(project_name='mde', task_name='test loop')
-# logger = task.get_logger()
+
 def weight_init(m):
     """
     initialize weights of net to Kaiming and biases to zero,
@@ -65,8 +70,12 @@ def train():
     old_lr = optimizer.param_groups[0]['lr']
     scheduler = ReduceLROnPlateau(optimizer, mode='min')
     if cfg['model']['use_saved']:
-        net, optimizer, epoch_start, running_loss = load_checkpoint(net, optimizer)
-        epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
+        try:
+            net, optimizer, epoch_start, running_loss = load_checkpoint(net, optimizer)
+            epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
+        except Exception as e:
+            print(e)
+            epoch_start = 0
     else:
         epoch_start = 0
     running_loss = 0.0
@@ -82,8 +91,6 @@ def train():
                 pbar.set_postfix(**{'loss (batch)': loss_value})
                 running_loss += loss_value
                 pbar.update()
-            if cfg_train['val_round']:
-                val_score, val_sample = model.eval_net(net, val_loader, criterion)
                 # scheduler.step(val_score)  # possibly plateau LR.
                 # new_lr = optimizer.param_groups[0]['lr']
                 # if old_lr != new_lr:
@@ -91,8 +98,11 @@ def train():
                 # old_lr = new_lr
             if epoch % print_every == print_every - 1:
                 #     # TODO: maybe add train_val
-                # else:
-                #     val_score = None
+                if cfg_train['val_round']:
+                    val_score, val_sample = model.eval_net(net, val_loader, criterion)
+                else:
+                    val_score = None
+                    val_sample = None
                 train_loss = running_loss / (print_every * n_batches)
                 train_sample = {**data, 'pred': pred_depth}
                 print_stats(train_sample, val_sample,
@@ -106,24 +116,6 @@ def train():
     # TODO: graceful death - checkpoint when exiting run as well.
     if cfg_train['save']:
         save_checkpoint(epochs - 1, net, optimizer, 0)
-
-
-def get_folder_name():
-    """
-
-    Returns: folder name in which to save tensorboard run and model checkpoints.
-
-    """
-    use_saved = cfg['model']['use_saved']
-    if use_saved:
-        folder_name = cfg['model']['path']
-        if folder_name.endswith('.pt'):
-            return '/'.join(folder_name.split('/')[:-1])
-        else:
-            return folder_name
-    run_name = cfg['train']['run_name']
-    cur_time = current_time.strftime("%m_%d_%H-%M-%S")
-    return cur_time + '_' + run_name
 
 
 def save_checkpoint(epoch, net, optimizer, running_loss):
@@ -206,10 +198,11 @@ def print_stats(train_sample, val_sample,
     fig.suptitle(f'train, epoch {epoch}', fontsize='xx-large')
     # plt.show()
     writer.add_figure(tag='viz/train', figure=fig, global_step=epoch)
-    fig = viz.show_batch(val_sample)
-    fig.suptitle(f'val, epoch {epoch}', fontsize='xx-large')
-    # plt.show()
-    writer.add_figure(tag='viz/val', figure=fig, global_step=epoch)
+    if val_sample is not None:
+        fig = viz.show_batch(val_sample)
+        fig.suptitle(f'val, epoch {epoch}', fontsize='xx-large')
+        # plt.show()
+        writer.add_figure(tag='viz/val', figure=fig, global_step=epoch)
 
 
 def get_net():
@@ -259,7 +252,7 @@ def get_loaders():
     val_percent = cfg_train['val_percent']
     subset_size = cfg_train['subset_size']
     if cfg_train['use_folds']:
-        train_split, val_split = get_farsight_fold_dataset(0)
+        train_split, val_split = get_farsight_fold_dataset(1)
         if subset_size is not None:
             train_size = int(subset_size * (1 - val_percent))
             val_size = int(subset_size * val_percent)
@@ -307,7 +300,9 @@ def load_checkpoint(net, optim):
     path = os.path.join('..', 'models', cfg['model']['path'])
     if not path.endswith('.pt'):
         # default to last trained model.
-        path = os.path.join(path, os.listdir(path)[-1])
+        path = os.path.join(path, max(os.listdir(path)))
+    if not os.path.exists(path):
+        raise FileNotFoundError
     logging.info(f'loading from {path}')
     checkpoint = torch.load(path)
     net.load_state_dict(checkpoint['model_state_dict'])
