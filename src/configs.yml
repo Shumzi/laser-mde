@@ -5,25 +5,28 @@ dataset:
   img_foldername: img
 model:
   use_cuda: True
-  use_saved: True
-  path: 12_30_17-09-42_sanity-fold-full-dataset-w-aug
+  use_saved: False
+  path:
   weight_init: True
+  randomize_seed: False
   name: UNet
   use_bn: True
+  use_dropout: True
   loss: rmsle
   # randomdata?
   # shuffledata?
   lr: 1.e-2
+  use_lr_scheduler: False
 train:
   batch_size: 4
   epochs: 1000
-  subset_size:
-  use_folds: True
-  val_round: True
+  subset_size: 4
+  use_folds: False
+  val_round: False
   shuffle_val: True
   val_percent: 0.2
-  run_name: 'sanity-fold-full-dataset-w-aug'
-  print_every: 1
+  run_name: 'aug-and-dropout'
+  print_every: 100
   save: True
   save_every: 50
   data_augmentation:
@@ -38,4 +41,3 @@ evaluate: # TODO: actually take eval into account.
   batch_size: 10
   hist: False
 verbose: True
-random_seed: 42

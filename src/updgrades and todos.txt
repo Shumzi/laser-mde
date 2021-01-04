@@ -33,4 +33,4 @@ Overfitting
 future work:
     test time augs as majority vote
     save best
-    strees test to check how robust model is (future work).
+    stress test to check how robust model is (future work).

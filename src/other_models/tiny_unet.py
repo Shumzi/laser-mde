@@ -10,19 +10,27 @@ class UNetConvBlock(nn.Module):
     layer channel sizes are: input (in_size) -> middle (out_size) -> out (out_size).
     max pooling (down sampling) is done outside of the block.
     """
+
     def __init__(self, in_size, out_size, kernel_size=3, activation=F.relu):
         super(UNetConvBlock, self).__init__()
         self.conv = nn.Conv2d(in_size, out_size, kernel_size, padding=1)
         self.conv2 = nn.Conv2d(out_size, out_size, kernel_size, padding=1)
         self.activation = activation
         if cfg['model']['use_bn']:
-            self.bn = nn.BatchNorm2d(out_size)
+            self.bn1 = nn.BatchNorm2d(out_size)
+            self.bn2 = nn.BatchNorm2d(out_size)
+        if cfg['model']['use_dropout']:
+            self.dropout = nn.Dropout2d()
 
     def forward(self, x):
         out = self.activation(self.conv(x))
+        if cfg['model']['use_bn']:
+            out = self.bn1(out)
         out = self.activation(self.conv2(out))
         if cfg['model']['use_bn']:
-            out = self.bn(out)
+            out = self.bn2(out)
+        if cfg['model']['use_dropout']:
+            out = self.dropout(out)
         return out
 
 
@@ -35,25 +43,16 @@ class UNetUpBlock(nn.Module):
     3. double conv on concatted layer (same as convblock).
     regularization stages are as described in https://arxiv.org/pdf/1904.03392.pdf
     """
+
     def __init__(self, in_size, out_size, kernel_size=3, activation=F.relu, space_dropout=False):
         super(UNetUpBlock, self).__init__()
         self.up = nn.ConvTranspose2d(in_size, out_size, 2, stride=2)
-        self.conv = nn.Conv2d(in_size, out_size, kernel_size, padding=1)
-        self.conv2 = nn.Conv2d(out_size, out_size, kernel_size, padding=1)
-        self.activation = activation
-        if cfg['model']['use_bn']:
-            self.bn1 = nn.BatchNorm2d(in_size)
-            self.bn2 = nn.BatchNorm2d(out_size)
-        if cfg['model']['use_dropout']:
-            self.dropout = nn.Dropout2d()
+        self.conv_block = UNetConvBlock(in_size, out_size, kernel_size, activation)
 
     def forward(self, x, bridge):
         up = self.up(x)
         out = torch.cat([up, bridge], 1)
-        out = self.activation(self.conv(out))
-        out = self.conv2(out)
-        if cfg['model']['use_bn']:
-            out = self.bn(out)
+        out = self.conv_block(out)
         return out
 
 
@@ -63,13 +62,14 @@ class UNet(nn.Module):
     and uses less channels (4x less per layer - e.g. 16 in layer 1 instead of 64 in original paper).
     Used as a toy net to see that it works at all.
     """
+
     def __init__(self, tiny=True):
         super().__init__()
         mult = 4
         if tiny:
             mult = 1
         self.activation = F.relu
-        
+
         self.pool1 = nn.MaxPool2d(2)
         self.pool2 = nn.MaxPool2d(2)
         self.pool3 = nn.MaxPool2d(2)
@@ -104,5 +104,5 @@ class UNet(nn.Module):
         up3 = self.up_block32_16(up2, block1)
 
         last = self.last(up3)
-        
+
         return torch.sigmoid(last.squeeze())

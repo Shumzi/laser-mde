@@ -32,7 +32,12 @@ def toyNet():
         Squeeze()
     )
 
+class EigenCoarse(nn.Module):
+    """
+    based on eigen et al. 2014 https://arxiv.org/pdf/1406.2283.pdf
+    coarse net to give rough shape of depth,
 
+    """
 class WeightValues(nn.Module):
     """
     helper class to see mean and std at some layer.

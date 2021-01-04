@@ -18,16 +18,16 @@ from other_models.tiny_unet import UNet
 from utils import get_dev, cfg, get_folder_name
 
 logger = logging.getLogger(__name__)
-if cfg['misc']['verbose']:
+if cfg['verbose']:
     logger.setLevel(logging.INFO)
     logging.basicConfig(level=logging.INFO)
 
 cfg_train = cfg['train']
-cfg_checkpoints = cfg['checkpoints']
+cfg_model = cfg['model']
 
-task = Task.init(project_name='ariel-mde', task_name=get_folder_name(), continue_last_task=cfg_checkpoints['use_saved'])
-clearml_logger = task.get_logger()
-config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
+# task = Task.init(project_name='ariel-mde', task_name=get_folder_name(), continue_last_task=cfg_model['use_saved'])
+# clearml_logger = task.get_logger()
+# config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
 
 
 def weight_init(m):
@@ -69,8 +69,10 @@ def train():
     # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
     criterion, net, optimizer = get_net()
     old_lr = optimizer.param_groups[0]['lr']
-    scheduler = ReduceLROnPlateau(optimizer, mode='min')
-    if cfg_checkpoints['use_saved']:
+    cfg_model = cfg['model']
+    if cfg_model['use_lr_scheduler']:
+        scheduler = ReduceLROnPlateau(optimizer, mode='min')
+    if cfg_model['use_saved']:
         try:
             net, optimizer, epoch_start, running_loss = load_checkpoint(net, optimizer)
             epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
@@ -92,14 +94,17 @@ def train():
                 pbar.set_postfix(**{'loss (batch)': loss_value})
                 running_loss += loss_value
                 pbar.update()
-                # scheduler.step(val_score)  # possibly plateau LR.
-                # new_lr = optimizer.param_groups[0]['lr']
-                # if old_lr != new_lr:
-                #     print(fr'old lr: {old_lr}, new lr: {new_lr}')
-                # old_lr = new_lr
+
+            if cfg_model['use_lr_scheduler']:
+                val_score, val_sample = model.eval_net(net, val_loader, criterion)
+                scheduler.step(val_score)  # possibly plateau LR.
+                new_lr = optimizer.param_groups[0]['lr']
+                if old_lr != new_lr:
+                    print(fr'old lr: {old_lr}, new lr: {new_lr}')
+                old_lr = new_lr
             if epoch % print_every == print_every - 1:
                 #     # TODO: maybe add train_val
-                if cfg_train['val_round']:
+                if not cfg_model['use_lr_scheduler'] and cfg_train['val_round']:
                     val_score, val_sample = model.eval_net(net, val_loader, criterion)
                 else:
                     val_score = None
@@ -223,7 +228,7 @@ def get_net():
         net = model.toyNet()
     else:
         raise ValueError("can only use UNET or toynet.")
-    if cfg_model['weight_init'] and not cfg_checkpoints['use_saved']:
+    if cfg_model['weight_init'] and not cfg_model['use_saved']:
         net.apply(weight_init)
     net.to(device=get_dev())
     print('using ', get_dev())
