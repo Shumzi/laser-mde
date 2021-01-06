@@ -11,7 +11,8 @@ model:
   randomize_seed: False
   name: UNet
   use_bn: True
-  use_dropout: True
+  use_double_bn: False
+  use_dropout: False
   loss: rmsle
   # randomdata?
   # shuffledata?
@@ -20,21 +21,21 @@ model:
 train:
   batch_size: 4
   epochs: 1000
-  subset_size: 4
-  use_folds: False
-  val_round: False
+  subset_size: 20
+  use_folds: True
+  val_round: True
   shuffle_val: True
   val_percent: 0.2
-  run_name: 'aug-and-dropout'
+  run_name: 'single_bn_toy_folds'
   print_every: 100
-  save: True
-  save_every: 50
+  save: False
+  save_every:
   data_augmentation:
-    horizontal_flip: True
+    horizontal_flip: False
     flip_p: 0.5
-    color_jitter: True
-    gaussian_blur: True
-    gaussian_noise: True
+    color_jitter: False
+    gaussian_blur: False
+    gaussian_noise: False
     # possibly add std and probability for augs over here?
 
 evaluate: # TODO: actually take eval into account.

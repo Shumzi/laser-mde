@@ -16,15 +16,16 @@ class UNetConvBlock(nn.Module):
         self.conv = nn.Conv2d(in_size, out_size, kernel_size, padding=1)
         self.conv2 = nn.Conv2d(out_size, out_size, kernel_size, padding=1)
         self.activation = activation
-        if cfg['model']['use_bn']:
+        if cfg['model']['use_double_bn']:
             self.bn1 = nn.BatchNorm2d(out_size)
+        if cfg['model']['use_bn']:
             self.bn2 = nn.BatchNorm2d(out_size)
         if cfg['model']['use_dropout']:
             self.dropout = nn.Dropout2d()
 
     def forward(self, x):
         out = self.activation(self.conv(x))
-        if cfg['model']['use_bn']:
+        if cfg['model']['use_double_bn']:
             out = self.bn1(out)
         out = self.activation(self.conv2(out))
         if cfg['model']['use_bn']:
