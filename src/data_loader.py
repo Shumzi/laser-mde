@@ -1,23 +1,72 @@
 from __future__ import print_function, division
-import logging
-import sys
 
-from utils import get_depth_dir, get_img_dir
-import utils as defs
-import visualize as viz
-import random
 import os
-import torch
-from skimage import io
-import numpy as np
-import matplotlib.pyplot as plt
-from torch.utils.data import Dataset, DataLoader, Subset
-from torchvision import transforms, utils
-from torchvision.transforms import functional as TF
-import pandas as pd
+import random
 from random import shuffle
 
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+from pypfm import PFMLoader
+from skimage import io
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from torchvision.transforms import functional as TF
+
+import utils as defs
+import visualize as viz
+from utils import get_depth_dir, get_img_dir, get_test_dir
+
 cfg_aug = defs.cfg['data_augmentation']
+
+
+class GeoposeDataset(Dataset):
+    """GeoPose3K dataset with (img,depth) pairs."""
+
+    def __init__(self, transform=None):
+        """
+
+        Args:
+            transform (callable, optional): Optional transform to be applied
+                  on a sample.
+        """
+        self.dir = '../data/geoPose3K'
+        self.transform = transform
+        self.foldernames = np.array([fn for fn in os.listdir(self.dir) if os.path.isdir(fn) and not fn.startswith('.')])
+        self.foldernames.sort()
+
+    def __len__(self):
+        return len(self.foldernames)
+
+    def __getitem__(self, idx):
+        # batch requests
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        batch_folders = os.path.join(self.dir, self.foldernames[idx])
+        img_names = []
+        depth_names = []
+        loader = PFMLoader()
+
+        for folder in batch_folders:
+            for file in os.listdir(batch_folders):
+                if file == 'distance_crop.pfm':
+                    depth_names.append(os.path.join(folder, file))
+                if file.endswith(('.png', '.jpg', '.jpeg')):
+                    img_names.append(os.path.join(folder, file))
+        if len(img_names) != len(depth_names):
+            raise Exception(f'don\'t have same amount of images as depths.\n'
+                            f' imgs: {len(img_names)}\ndepths: {len(depth_names)}')
+        image = io.imread(img_names)
+        depth = io.imread(depth_names)
+        # bad - all images are in different resolutions!!!
+        # also need to get depth from pfm, not as image.
+        sample = {'image': image, 'depth': depth, 'name': self.filenames[idx].strip('.png')}
+
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
 
 
 class FarsightDataset(Dataset):
@@ -64,6 +113,25 @@ class FarsightDataset(Dataset):
         return sample
 
 
+class FarsightTestDataset(Dataset):
+    def __init__(self, transform=None):
+        self.transform = transform
+        self.test_dir = get_test_dir()
+        self.filenames = np.array([fn for fn in os.listdir(self.test_dir) if fn.lower().endswith('.png')])
+
+    def __len__(self):
+        return len(self.filenames)
+
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.test_dir,
+                                self.filenames[idx])
+        image = io.imread(img_name)
+        if self.transform is not None:
+            image = self.transform(image)
+
+        return {'image': image, 'name': self.filenames[idx].strip('.png')}
+
+
 class ToTensor(object):
     """Convert ndarrays in sample to Tensors
     and moves them into the correct range for conv operations."""
@@ -78,6 +146,7 @@ class ToTensor(object):
         # so change to float32 & range [0..1] instead of [0..255].
         # transpose conv works bad with 513x513 images, so take only 512x512 from farsight imgs.
         image = (image.transpose((2, 0, 1)).astype(np.float32) / 256)[:, :-1, :-1]
+        # image = image*2-1
         # same problem with depth. depth is in bins of 4m, max 250 (1000m). Moving to [0..1] 
         depth = (depth.astype(np.float32) / 250)[:-1, :-1]
         # depth is just H X W, so no problem here.
@@ -209,21 +278,3 @@ if __name__ == '__main__':
         # viz.show_batch(v_sample)
         # plt.suptitle(f'val_{i}_{len(v_loader)}')
         # plt.show()
-
-    # dataloader = DataLoader(FarsightDataset(transform=ToTensor()),
-    #                         batch_size=4, shuffle=True, num_workers=0)
-    #
-    # for i_batch, sample_batched in enumerate(dataloader):
-    #     print('batch #{}, img size: {}, depth size: {}'.format(i_batch,
-    #                                                            sample_batched['image'].size(),
-    #                                                            sample_batched['depth'].size()))
-    #
-    #     # observe 4th batch and stop.
-    #     if i_batch == 3:
-    #         fig = plt.figure()
-    #         viz.show_batch({**sample_batched,
-    #                         'disp': sample_batched['depth'] - sample_batched['depth']})
-    #         plt.title('hi')
-    #         # plt.axis('off')
-    #         plt.show()
-    #         break

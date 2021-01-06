@@ -3,8 +3,9 @@
 
 dataset:
   data_dir: ../data/farsight
-  depth_foldername: depth
-  img_foldername: img
+  depth_foldername: depth_without_bad_images
+  img_foldername: img_without_bad_images
+  test_foldername: test
 
 misc:
   verbose: True
@@ -14,18 +15,18 @@ misc:
 checkpoint:
   # if you load a checkpoint, run_name is ignored.
   # if save_every is empty, it won't save.
-  use_saved: True
-  saved_path: 01_06_14-37-08_test_save_arch
-  run_name: test_save_arch
-  save_every: 1
+  use_saved: False
+  saved_path: 01_06_17-21-49_test_save_arch
+  run_name:
+  save_every: 100
 
 model:
   # is irrelevant if you're loading a saved model.
   # arch is prebuilt into the .pt file. easier to handle it.
   weight_init: True
-  name: toynet
+  name: UNet
   use_bn: True
-  use_double_bn: True
+  use_double_bn: False
   use_dropout: False
 
 optim:
@@ -38,9 +39,9 @@ optim:
 train:
   batch_size: 4
   epochs: 1000
-  subset_size: 50
+  subset_size: 10
   use_folds: True
-  print_every: 100
+  print_every: 10
 
 validation:
   batch_size: 10

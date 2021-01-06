@@ -25,12 +25,12 @@ def show_batch(batch):
         filenames = batch.pop('name')
     except:
         filenames = None
-    types, images_batches = list(batch.keys()), list(batch.values())  # images_batches: list(batches)
-    batch_size = len(images_batches[0])
-    type_size = len(images_batches)  # amount of types of images we'll be displaying.
+    keys, values = list(batch.keys()), list(batch.values())  # images_batches: list(batches)
+    batch_size = len(values[0])
+    type_size = len(values)  # amount of types of images we'll be displaying.
     fig, ax = plt.subplots(type_size, batch_size, figsize=(batch_size * 4, type_size * 4))
     # image type
-    for i, type_name in enumerate(types):
+    for i, type_name in enumerate(keys):
         ax[i, 0].set_ylabel(type_name, fontsize='x-large')
     # sample number
     if filenames is not None:
@@ -42,7 +42,7 @@ def show_batch(batch):
         for j in range(batch_size):
             ax[0, j].set_title('sample #{}'.format(j))
     # display actual image.
-    for i, img_batch in enumerate(images_batches):
+    for i, img_batch in enumerate(values):
         if torch.is_tensor(img_batch):
             img_batch = img_batch.detach().cpu().numpy()
             if img_batch.shape[1] == 3:

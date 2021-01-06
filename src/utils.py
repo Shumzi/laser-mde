@@ -61,6 +61,12 @@ def get_img_dir():
     return os.path.join(cfg['dataset']['data_dir'], cfg['dataset']['img_foldername'])
 
 
+def get_test_dir():
+    """
+        Returns: path to test folder
+    """
+    return os.path.join(cfg['dataset']['data_dir'], cfg['dataset']['test_foldername'])
+
 def get_dev():
     """
     Returns: device to be used for torch (preferably GPU).
@@ -87,5 +93,7 @@ def get_folder_name():
         else:
             return folder_name
     run_name = cfg_checkpoint['run_name']
+    if run_name is None:
+      run_name = input('enter run name: ')
     cur_time = current_time.strftime("%m_%d_%H-%M-%S")
     return cur_time + '_' + run_name

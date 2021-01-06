@@ -58,7 +58,6 @@ def train():
     cfg_checkpoint = cfg['checkpoint']
     cfg_validation = cfg['validation']
     epochs = cfg_train['epochs']
-
     print_every = cfg_train['print_every']
     save_every = cfg_checkpoint['save_every']
     folder_name = get_folder_name()
@@ -76,6 +75,7 @@ def train():
     else:
         criterion, net, optimizer = get_net()
         running_loss = 0.0
+        epoch_start = 0
     if cfg_optim['use_lr_scheduler']:
         old_lr = optimizer.param_groups[0]['lr']
         scheduler = ReduceLROnPlateau(optimizer, mode='min')
@@ -101,11 +101,12 @@ def train():
                 old_lr = new_lr
             if epoch % print_every == print_every - 1:
                 #     # TODO: maybe add train_val
-                if not cfg_optim['use_lr_scheduler'] and cfg_validation['val_round']:
-                    val_score, val_sample = eval_net(net, val_loader, criterion)
-                else:
-                    val_score = None
-                    val_sample = None
+                if not cfg_optim['use_lr_scheduler']:
+                    if cfg_validation['val_round']:
+                        val_score, val_sample = eval_net(net, val_loader, criterion)
+                    else:
+                        val_score = None
+                        val_sample = None
                 train_loss = running_loss / (print_every * n_batches)
                 train_sample = {**data, 'pred': pred_depth}
                 print_stats(train_sample, val_sample,
@@ -327,8 +328,6 @@ def save_checkpoint(epoch, net, optimizer, running_loss):
         'model': net,
         'optimizer': optimizer,
         'epoch': epoch,
-        # 'model_state_dict': net.state_dict(),
-        # 'optimizer_state_dict': optimizer.state_dict(),
         'loss': running_loss
     }, full_path)
 
@@ -357,8 +356,6 @@ def load_checkpoint():
     checkpoint = torch.load(path)
     net = checkpoint['model']
     optim = checkpoint['optimizer']
-    # net.load_state_dict(checkpoint['model_state_dict'])
-    # optim.load_state_dict(checkpoint['optimizer_state_dict'])
     epoch = checkpoint['epoch']
     loss = checkpoint['loss']
     return net, optim, epoch, loss
