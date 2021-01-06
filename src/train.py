@@ -22,8 +22,6 @@ if cfg['misc']['verbose']:
     logger.setLevel(logging.INFO)
     logging.basicConfig(level=logging.INFO)
 
-cfg_train = cfg['train']
-cfg_model = cfg['model']
 
 # task = Task.init(project_name='ariel-mde', task_name=get_folder_name(), continue_last_task=cfg_model['use_saved'])
 # clearml_logger = task.get_logger()
@@ -33,7 +31,7 @@ cfg_model = cfg['model']
 def weight_init(m):
     """
     initialize weights of net to Kaiming and biases to zero,
-    since pytorch doesn't do that.
+    since pytorch doesn't do that (assumes leaky relu).
 
     Usage: net.apply(weight_init)
 
@@ -68,22 +66,19 @@ def train():
     train_loader, val_loader = get_loaders()
     n_batches = len(train_loader)
     # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
-    criterion, net, optimizer = get_net()
-    old_lr = optimizer.param_groups[0]['lr']
     cfg_model = cfg['model']
     cfg_checkpoint = cfg['checkpoint']
-    if cfg_model['use_lr_scheduler']:
-        scheduler = ReduceLROnPlateau(optimizer, mode='min')
+    cfg_optim = cfg['optim']
     if cfg_checkpoint['use_saved']:
-        try:
-            net, optimizer, epoch_start, running_loss = load_checkpoint(net, optimizer)
-            epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
-        except Exception as e:
-            print(e)
-            epoch_start = 0
+        net, optimizer, epoch_start, running_loss = load_checkpoint()
+        criterion = get_criterion()
+        epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
     else:
-        epoch_start = 0
-    running_loss = 0.0
+        criterion, net, optimizer = get_net()
+        running_loss = 0.0
+    if cfg_optim['use_lr_scheduler']:
+        old_lr = optimizer.param_groups[0]['lr']
+        scheduler = ReduceLROnPlateau(optimizer, mode='min')
     logger.info('got all params, starting train loop')
     for epoch in range(epoch_start, epochs):  # loop over the dataset multiple times
         net.train()
@@ -97,8 +92,8 @@ def train():
                 running_loss += loss_value
                 pbar.update()
 
-            if cfg_model['use_lr_scheduler']:
-                val_score, val_sample = model.eval_net(net, val_loader, criterion)
+            if cfg_optim['use_lr_scheduler']:
+                val_score, val_sample = eval_net(net, val_loader, criterion)
                 scheduler.step(val_score)  # possibly plateau LR.
                 new_lr = optimizer.param_groups[0]['lr']
                 if old_lr != new_lr:
@@ -106,8 +101,8 @@ def train():
                 old_lr = new_lr
             if epoch % print_every == print_every - 1:
                 #     # TODO: maybe add train_val
-                if not cfg_model['use_lr_scheduler'] and cfg_validation['val_round']:
-                    val_score, val_sample = model.eval_net(net, val_loader, criterion)
+                if not cfg_optim['use_lr_scheduler'] and cfg_validation['val_round']:
+                    val_score, val_sample = eval_net(net, val_loader, criterion)
                 else:
                     val_score = None
                     val_sample = None
@@ -125,45 +120,51 @@ def train():
         save_checkpoint(epochs - 1, net, optimizer, 0)
 
 
-def save_checkpoint(epoch, net, optimizer, running_loss):
-    """
-    save a checkpoint of the network for future use.
-    location is defined in configs.yml file.
-    Args:
-        epoch: int.
-        net: network object (only weights are saved).
-        optimizer
-    # TODO: check rnd. gen is consistent.: optimizer object (only weights are saved).
-        running_loss: float, current loss (for possibly future use).
-
-    Returns: None (checkpoint saved).
-
-    """
-    logging.info(f'saving checkpoint at epoch {epoch}...')
-    folder = get_folder_name()
-    folder = os.path.join('../models', folder)
-    filename = 'epoch_' + str(epoch).zfill(4) + '.pt'
-    if not os.path.exists(folder):
-        os.mkdir(folder)
-    full_path = os.path.join(folder, filename)
-    if os.path.exists(full_path):
-        logger.warning(f'not saving {full_path} as it already exists.')
-        return
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': net.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss': running_loss
-    }, full_path)
-
-
 def step(criterion, img, gt_depth, net, optimizer):
+    """
+    single forward and backward step with a specific image batch.
+
+    Returns: loss: float, predicted depth map: torch.Tensor.
+
+    """
     optimizer.zero_grad()
     pred_depth = net(img)
     loss = criterion(pred_depth, gt_depth)
     loss.backward()
     optimizer.step()
     return loss, pred_depth
+
+
+def eval_net(net, loader, metric):
+    """
+    Validation stage in the training loop.
+
+    Args:
+        net: network being trained
+        loader: data loader of validation data
+        metric: metric to test validation upon.
+    Returns: score of eval based on criterion.
+
+    """
+    net.eval()
+    n_val = len(loader)
+    score = 0
+    val_sample = {}
+    with tqdm(total=n_val, desc='Validation round', unit='batch', leave=False) as pbar:
+        for i, batch in enumerate(loader):
+            imgs, gt_depths = batch['image'], batch['depth']
+            with torch.no_grad():
+                pred_depths = net(imgs)
+            score += metric(pred_depths, gt_depths)
+            if i == n_val - 1:
+                val_sample.update({**batch, 'pred': pred_depths})
+                # fig = viz.show_batch({**batch, 'pred': pred_depths})
+                # writer.add_images('val/pred', pred_depths.unsqueeze(1), step)
+                # writer.add_images('val/gt', gt_depths.unsqueeze(1), step)
+            pbar.update()
+    score /= n_val
+    net.train()
+    return score, val_sample
 
 
 def print_stats(train_sample, val_sample,
@@ -214,7 +215,8 @@ def print_stats(train_sample, val_sample,
 
 def get_net():
     """
-    get objects for training the network.
+    get objects for training the network,
+    as specified in configs.yml 'model'
 
     Returns: (criterion, net, optimizer) where:
         criterion: loss function for optimization.
@@ -223,6 +225,7 @@ def get_net():
     """
     cfg_model = cfg['model']
     cfg_checkpoint = cfg['checkpoint']
+    cfg_optim = cfg['optim']
     model_name = cfg_model['name'].lower()
     if model_name == 'unet':
         net = UNet()
@@ -235,7 +238,14 @@ def get_net():
     net.to(device=get_dev())
     print('using ', get_dev())
     # TODO: use loss in configs for loss.
-    loss_func_name = cfg_model['loss'].lower()
+    criterion = get_criterion()
+    optimizer = optim.Adam(net.parameters(), lr=cfg_optim['lr'])
+    return criterion, net, optimizer
+
+
+def get_criterion():
+    cfg_optim = cfg['optim']
+    loss_func_name = cfg_optim['loss'].lower()
     if loss_func_name.startswith('rmsle'):
         logger.info('using rmsle')
         criterion = model.RMSLELoss()
@@ -243,13 +253,12 @@ def get_net():
         criterion = nn.MSELoss()
     else:
         raise ValueError("can only use rmsle or mse")
-    optimizer = optim.Adam(net.parameters(), lr=cfg_model['lr'])
-    return criterion, net, optimizer
+    return criterion
 
 
 def get_loaders():
     """
-    get dataloaders for train and val,
+    get data loaders for train set and val set
 
     Returns: train_loader and val_loader (pytorch dataloaders).
 
@@ -268,6 +277,7 @@ def get_loaders():
             train_split = Subset(train_split, range(train_size))
             val_split = Subset(val_split, range(val_size))
     else:
+        # TODO: generalize dataset to any dataset (hills for example).
         ds = FarsightDataset(transform=ToTensor())
         if subset_size is not None:
             ds = Subset(ds, range(subset_size))
@@ -289,16 +299,47 @@ def get_loaders():
     return train_loader, val_loader
 
 
-def load_checkpoint(net, optim):
+def save_checkpoint(epoch, net, optimizer, running_loss):
+    """
+    save a checkpoint of the network for future use.
+    location is defined in configs.yml file.
+    Args:
+        epoch: int.
+        net: network object (both weights and model object base is saved).
+        optimizer
+    # TODO: check rnd. gen is consistent.: optimizer object (only weights are saved).
+        running_loss: float, current loss (for possibly future use).
+
+    Returns: None (checkpoint saved).
+
+    """
+    logging.info(f'\nsaving checkpoint at epoch {epoch}...')
+    folder = get_folder_name()
+    folder = os.path.join('../models', folder)
+    filename = 'epoch_' + str(epoch).zfill(4) + '.pt'
+    if not os.path.exists(folder):
+        os.mkdir(folder)
+    full_path = os.path.join(folder, filename)
+    if os.path.exists(full_path):
+        logger.warning(f'not saving {full_path} as it already exists.')
+        return
+    torch.save({
+        'model': net,
+        'optimizer': optimizer,
+        'epoch': epoch,
+        # 'model_state_dict': net.state_dict(),
+        # 'optimizer_state_dict': optimizer.state_dict(),
+        'loss': running_loss
+    }, full_path)
+
+
+def load_checkpoint():
     """
     load a saved checkpoint from the training process,
     be it for continued training or inference.
     location from which to load checkpoint is defined in configs.yml file.
 
     Args:
-        net: network object, corresponding to the network that was saved in the checkpoint.
-        optim: optimizer object, corresponding to the optimizer that was saved in the checkpoint.
-
     Returns: (net, optim, epoch, loss) where:
         net: weighted net
         optim: weighted optimizer
@@ -314,8 +355,10 @@ def load_checkpoint(net, optim):
         raise FileNotFoundError
     logging.info(f'loading from {path}')
     checkpoint = torch.load(path)
-    net.load_state_dict(checkpoint['model_state_dict'])
-    optim.load_state_dict(checkpoint['optimizer_state_dict'])
+    net = checkpoint['model']
+    optim = checkpoint['optimizer']
+    # net.load_state_dict(checkpoint['model_state_dict'])
+    # optim.load_state_dict(checkpoint['optimizer_state_dict'])
     epoch = checkpoint['epoch']
     loss = checkpoint['loss']
     return net, optim, epoch, loss

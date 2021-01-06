@@ -52,41 +52,10 @@ class WeightValues(nn.Module):
         return x
 
 
-def eval_net(net, loader, metric):
-    """
-    Validation stage in the training loop.
-
-    Args:
-        net: network being trained
-        loader: data loader of validation data
-        metric: metric to test validation upon.
-    Returns: score of eval based on criterion.
-
-    """
-    net.eval()
-    n_val = len(loader)
-    score = 0
-    val_sample = {}
-    with tqdm(total=n_val, desc='Validation round', unit='batch', leave=False) as pbar:
-        for i, batch in enumerate(loader):
-            imgs, gt_depths = batch['image'], batch['depth']
-            with torch.no_grad():
-                pred_depths = net(imgs)
-            score += metric(pred_depths, gt_depths)
-            if i == n_val - 1:
-                val_sample.update({**batch, 'pred': pred_depths})
-                # fig = viz.show_batch({**batch, 'pred': pred_depths})
-                # writer.add_images('val/pred', pred_depths.unsqueeze(1), step)
-                # writer.add_images('val/gt', gt_depths.unsqueeze(1), step)
-            pbar.update()
-    score /= n_val
-    net.train()
-    return score, val_sample
-
-
 class RMSLELoss(nn.Module):
     """
     root mean square log error.
+    taken from: https://discuss.pytorch.org/t/rmsle-loss-function/67281
     """
 
     def __init__(self):

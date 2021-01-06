@@ -1,4 +1,6 @@
 # possibly move to Hydra (FB) if things get complex.
+
+
 dataset:
   data_dir: ../data/farsight
   depth_foldername: depth
@@ -9,18 +11,24 @@ misc:
   random_seed: 42 # if none won't have constant seed.
   use_cuda: True
 
-checkpoint: # if you load a checkpoint, run_name is ignored.
-  use_saved: False
-  saved_path: 12_30_17-09-42_sanity-fold-full-dataset-w-aug
-  run_name: test
-  save_every:  # if empty won't save.
+checkpoint:
+  # if you load a checkpoint, run_name is ignored.
+  # if save_every is empty, it won't save.
+  use_saved: True
+  saved_path: 01_06_14-37-08_test_save_arch
+  run_name: test_save_arch
+  save_every: 1
 
 model:
+  # is irrelevant if you're loading a saved model.
+  # arch is prebuilt into the .pt file. easier to handle it.
   weight_init: True
-  name: UNet
+  name: toynet
   use_bn: True
-  use_double_bn: False
+  use_double_bn: True
   use_dropout: False
+
+optim:
   loss: rmsle
   lr: 1.e-2
   use_lr_scheduler: False
@@ -30,7 +38,7 @@ model:
 train:
   batch_size: 4
   epochs: 1000
-  subset_size:
+  subset_size: 50
   use_folds: True
   print_every: 100
 

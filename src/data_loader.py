@@ -25,9 +25,14 @@ class FarsightDataset(Dataset):
 
     def __init__(self, transform=None, filenames=None):
         """
+
         Args:
             transform (callable, optional): Optional transform to be applied
                   on a sample.
+            filenames: (list of strings, optional):
+                filenames in folders to use for dataset, instead of all files (default).
+                Example usage would be when making two datasets (train and test),
+                having to specify which files go where, since split must be by city.
         """
         self.img_dir = get_img_dir()
         self.depth_dir = get_depth_dir()
