@@ -18,7 +18,7 @@ from other_models.tiny_unet import UNet
 from utils import get_dev, cfg, get_folder_name
 
 logger = logging.getLogger(__name__)
-if cfg['verbose']:
+if cfg['misc']['verbose']:
     logger.setLevel(logging.INFO)
     logging.basicConfig(level=logging.INFO)
 
@@ -57,11 +57,12 @@ def train():
     """
     logger.info('getting params, dataloaders, etc...')
     cfg_train = cfg['train']
-
+    cfg_checkpoint = cfg['checkpoint']
+    cfg_validation = cfg['validation']
     epochs = cfg_train['epochs']
 
     print_every = cfg_train['print_every']
-    save_every = cfg_train['save_every']
+    save_every = cfg_checkpoint['save_every']
     folder_name = get_folder_name()
     writer = SummaryWriter(os.path.join('runs', folder_name))
     train_loader, val_loader = get_loaders()
@@ -70,9 +71,10 @@ def train():
     criterion, net, optimizer = get_net()
     old_lr = optimizer.param_groups[0]['lr']
     cfg_model = cfg['model']
+    cfg_checkpoint = cfg['checkpoint']
     if cfg_model['use_lr_scheduler']:
         scheduler = ReduceLROnPlateau(optimizer, mode='min')
-    if cfg_model['use_saved']:
+    if cfg_checkpoint['use_saved']:
         try:
             net, optimizer, epoch_start, running_loss = load_checkpoint(net, optimizer)
             epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
@@ -104,7 +106,7 @@ def train():
                 old_lr = new_lr
             if epoch % print_every == print_every - 1:
                 #     # TODO: maybe add train_val
-                if not cfg_model['use_lr_scheduler'] and cfg_train['val_round']:
+                if not cfg_model['use_lr_scheduler'] and cfg_validation['val_round']:
                     val_score, val_sample = model.eval_net(net, val_loader, criterion)
                 else:
                     val_score = None
@@ -115,12 +117,11 @@ def train():
                             train_loss, val_score, epoch, writer)
                 running_loss = 0.0
             if save_every is not None and (epoch % save_every == save_every - 1):
-                if cfg_train['save']:
-                    save_checkpoint(epoch, net, optimizer, running_loss)
+                save_checkpoint(epoch, net, optimizer, running_loss)
     print('Finished Training')
     writer.close()
     # TODO: graceful death - checkpoint when exiting run as well.
-    if cfg_train['save']:
+    if save_every is not None:
         save_checkpoint(epochs - 1, net, optimizer, 0)
 
 
@@ -192,7 +193,7 @@ def print_stats(train_sample, val_sample,
         writer.add_scalar('Loss/train', train_loss, epoch + 1)
     logger.warning(f'\ntrain loss: {train_loss}')
 
-    print_hist = cfg['evaluate']['hist']
+    print_hist = cfg['validation']['hist']
     if print_hist:
         for tag, value in net.named_parameters():
             tag = tag.replace('.', '/')
@@ -221,6 +222,7 @@ def get_net():
         optimizer:  optimization object (nn.optim)
     """
     cfg_model = cfg['model']
+    cfg_checkpoint = cfg['checkpoint']
     model_name = cfg_model['name'].lower()
     if model_name == 'unet':
         net = UNet()
@@ -228,7 +230,7 @@ def get_net():
         net = model.toyNet()
     else:
         raise ValueError("can only use UNET or toynet.")
-    if cfg_model['weight_init'] and not cfg_model['use_saved']:
+    if cfg_model['weight_init'] and not cfg_checkpoint['use_saved']:
         net.apply(weight_init)
     net.to(device=get_dev())
     print('using ', get_dev())
@@ -253,9 +255,10 @@ def get_loaders():
 
     """
     cfg_train = cfg['train']
+    cfg_validation = cfg['validation']
     batch_size = cfg_train['batch_size']
-    batch_size_val = cfg['evaluate']['batch_size']
-    val_percent = cfg_train['val_percent']
+    batch_size_val = cfg['validation']['batch_size']
+    val_percent = cfg_validation['val_percent']
     subset_size = cfg_train['subset_size']
     if cfg_train['use_folds']:
         train_split, val_split = get_farsight_fold_dataset(1)
@@ -303,7 +306,7 @@ def load_checkpoint(net, optim):
         loss: current loss in checkpoint.
 
     """
-    path = os.path.join('..', 'models', cfg['model']['path'])
+    path = os.path.join('..', 'models', cfg['checkpoint']['saved_path'])
     if not path.endswith('.pt'):
         # default to last trained model.
         path = os.path.join(path, max(os.listdir(path)))

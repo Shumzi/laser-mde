@@ -17,7 +17,9 @@ from torchvision.transforms import functional as TF
 import pandas as pd
 from random import shuffle
 
-cfg_aug = defs.cfg['train']['data_augmentation']
+cfg_aug = defs.cfg['data_augmentation']
+
+
 class FarsightDataset(Dataset):
     """Farsight dataset with (img,depth) pairs."""
 
@@ -172,7 +174,7 @@ def get_farsight_fold_dataset(fold, transform=None):
             train_idxs += list(g['filename'].values)
     shuffle(train_idxs)
     # TODO: make this not so shady as it is now. Maybe it's ok?
-    if defs.cfg['train']['shuffle_val']:
+    if defs.cfg['validation']['shuffle_val']:
         shuffle(val_idxs)
     train_ds = FarsightDataset(transform, train_idxs)
     val_ds = FarsightDataset(ToTensor(), val_idxs)

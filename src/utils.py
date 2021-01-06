@@ -7,6 +7,7 @@ from datetime import datetime
 import random
 import numpy as np
 
+
 class Singleton(type):
     _instances = {}
 
@@ -34,11 +35,12 @@ class ConfigHandler(metaclass=Singleton):
 
 cfg = ConfigHandler()
 current_time = datetime.now()
-if not cfg['model']['randomize_seed']:
-    torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
-    np.random.seed(42)
-    random.seed(42)
+rnd_seed = cfg['misc']['random_seed']
+if rnd_seed is not None:
+    torch.manual_seed(rnd_seed)
+    torch.cuda.manual_seed(rnd_seed)
+    np.random.seed(rnd_seed)
+    random.seed(rnd_seed)
 
 
 def get_depth_dir():
@@ -64,7 +66,7 @@ def get_dev():
     Returns: device to be used for torch (preferably GPU).
 
     """
-    if torch.cuda.is_available() and cfg['model']['use_cuda']:
+    if torch.cuda.is_available() and cfg['misc']['use_cuda']:
         return torch.device('cuda')
     else:
         return torch.device('cpu')
@@ -76,14 +78,14 @@ def get_folder_name():
     Returns: folder name in which to save tensorboard run and model checkpoints.
 
     """
-    cfg_model = cfg['model']
-    use_saved = cfg_model['use_saved']
+    cfg_checkpoint = cfg['checkpoint']
+    use_saved = cfg_checkpoint['use_saved']
     if use_saved:
-        folder_name = cfg_model['path']
+        folder_name = cfg_checkpoint['saved_path']
         if folder_name.endswith('.pt'):
             return '/'.join(folder_name.split('/')[:-1])
         else:
             return folder_name
-    run_name = cfg['train']['run_name']
+    run_name = cfg_checkpoint['run_name']
     cur_time = current_time.strftime("%m_%d_%H-%M-%S")
     return cur_time + '_' + run_name

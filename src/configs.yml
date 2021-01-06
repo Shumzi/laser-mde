@@ -3,42 +3,48 @@ dataset:
   data_dir: ../data/farsight
   depth_foldername: depth
   img_foldername: img
-model:
+
+misc:
+  verbose: True
+  random_seed: 42 # if none won't have constant seed.
   use_cuda: True
+
+checkpoint: # if you load a checkpoint, run_name is ignored.
   use_saved: False
-  path:
+  saved_path: 12_30_17-09-42_sanity-fold-full-dataset-w-aug
+  run_name: test
+  save_every:  # if empty won't save.
+
+model:
   weight_init: True
-  randomize_seed: False
   name: UNet
   use_bn: True
   use_double_bn: False
   use_dropout: False
   loss: rmsle
-  # randomdata?
-  # shuffledata?
   lr: 1.e-2
   use_lr_scheduler: False
+  # randomdata?
+  # shuffledata?
+
 train:
   batch_size: 4
   epochs: 1000
-  subset_size: 20
+  subset_size:
   use_folds: True
-  val_round: True
-  shuffle_val: True
-  val_percent: 0.2
-  run_name: 'single_bn_toy_folds'
   print_every: 100
-  save: False
-  save_every:
-  data_augmentation:
-    horizontal_flip: False
-    flip_p: 0.5
-    color_jitter: False
-    gaussian_blur: False
-    gaussian_noise: False
-    # possibly add std and probability for augs over here?
 
-evaluate: # TODO: actually take eval into account.
+validation:
   batch_size: 10
+  val_round: True
+  val_percent: 0.2
+  shuffle_val: True
   hist: False
-verbose: True
+
+data_augmentation:
+  flip_p: 0.5
+  horizontal_flip: True
+  color_jitter: True
+  gaussian_blur: True
+  gaussian_noise: True
+  # possibly add std and probability for augs over here?
