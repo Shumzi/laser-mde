@@ -1,18 +1,16 @@
 """
 assuming model works, just get images and output depth maps for said images.
 """
-import sys
 
-from torch.utils.data import DataLoader
 import numpy as np
-from data_loader import get_farsight_fold_dataset, FarsightTestDataset, ToTensor
-from train import load_checkpoint
 import torch
-import visualize as viz
-from skimage import io
 from matplotlib import pyplot as plt
-from utils import cfg, get_test_dir, get_dev
-import os
+from torch.utils.data import DataLoader
+
+import visualize as viz
+from data_loader import FarsightTestDataset
+from train import load_checkpoint
+from utils import get_dev
 
 
 def single_image_to_tensor(image):
@@ -21,10 +19,9 @@ def single_image_to_tensor(image):
     return torch_image
 
 
-def infer(img_names):
+def infer():
     net, optim, epoch, loss = load_checkpoint()
     net.eval()
-    images = []
 
     test_ds = DataLoader(FarsightTestDataset(transform=single_image_to_tensor))
     image_batch = None
@@ -46,7 +43,4 @@ def infer(img_names):
 
 
 if __name__ == "__main__":
-    cfg_ds = cfg['dataset']
-    path = get_test_dir()
-    image_names = os.listdir(path)
-    infer(image_names)
+    infer()

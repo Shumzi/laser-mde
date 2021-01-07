@@ -11,6 +11,7 @@ misc:
   verbose: True
   random_seed: 42 # if none won't have constant seed.
   use_cuda: True
+  use_trains: True
 
 checkpoint:
   # if you load a checkpoint, run_name is ignored.

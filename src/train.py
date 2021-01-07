@@ -22,10 +22,13 @@ if cfg['misc']['verbose']:
     logger.setLevel(logging.INFO)
     logging.basicConfig(level=logging.INFO)
 
-
-# task = Task.init(project_name='ariel-mde', task_name=get_folder_name(), continue_last_task=cfg_model['use_saved'])
-# clearml_logger = task.get_logger()
-# config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
+if cfg['misc']['use_trains']:
+    if cfg['checkpoint']['use_saved']:
+        task = Task.init(project_name='ariel-mde', task_name=get_folder_name())
+    else:
+        task = Task.init(project_name='ariel-mde', task_name=get_folder_name(), continue_last_task=cfg_model['use_saved'])
+    clearml_logger = task.get_logger()
+    config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
 
 
 def weight_init(m):

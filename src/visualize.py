@@ -2,6 +2,27 @@ from matplotlib import pyplot as plt
 from matplotlib import image
 import torch
 from mpl_toolkits.axes_grid1 import ImageGrid
+import numpy as np
+
+
+class Unravel:
+    def __init__(self, tuple_size, batch_size):
+        """
+        helper class for unraveling indexes of plots.
+        created for edge case of an axes being 1d.
+        Args:
+            tuple_size: int, no. of images per tuples that will be displayed
+            batch_size: int, no. of image tuples in batch.
+        """
+        self.tuple_size = tuple_size
+        self.batch_size = batch_size
+
+    def __call__(self, idx):
+        if self.tuple_size == 1 or self.batch_size == 1:
+            pos = idx
+        else:
+            pos = np.unravel_index(idx, (self.tuple_size, self.batch_size))
+        return pos
 
 
 def show_batch(batch):
@@ -11,6 +32,7 @@ def show_batch(batch):
     Args:
         batch: dict of batch, each key being a different type of image.
                 If dict contains 'name' key, it'll be used as the filenames for each img tuple.
+                batch should contain AT LEAST 2 objects to be plotted. we're not playing here.
 
     Returns: fig of plot.
 
@@ -27,20 +49,21 @@ def show_batch(batch):
         filenames = None
     keys, values = list(batch.keys()), list(batch.values())  # images_batches: list(batches)
     batch_size = len(values[0])
-    type_size = len(values)  # amount of types of images we'll be displaying.
-    fig, ax = plt.subplots(type_size, batch_size, figsize=(batch_size * 4, type_size * 4))
+    tuple_size = len(values)  # amount of images in per sample we'll be displaying.
+    u = Unravel(tuple_size, batch_size)
+    fig, ax = plt.subplots(tuple_size, batch_size, figsize=(batch_size * 4, tuple_size * 4))
     # image type
     for i, type_name in enumerate(keys):
-        ax[i, 0].set_ylabel(type_name, fontsize='x-large')
+        ax[u(i * batch_size)].set_ylabel(type_name, fontsize='x-large')
     # sample number
     if filenames is not None:
         for j, fn in enumerate(filenames):
-            ax[0, j].set_title('sample #{}\n{}'.format(j, fn))
+            ax[u(j)].set_title('sample #{}\n{}'.format(j, fn))
         # push back into dict.
         batch['name'] = filenames
     else:
         for j in range(batch_size):
-            ax[0, j].set_title('sample #{}'.format(j))
+            ax[u(j)].set_title('sample #{}'.format(j))
     # display actual image.
     for i, img_batch in enumerate(values):
         if torch.is_tensor(img_batch):
@@ -49,5 +72,14 @@ def show_batch(batch):
                 # reshape back from C X H X W into H X W X C.
                 img_batch = img_batch.transpose(0, 2, 3, 1)
         for j, img in enumerate(img_batch):
-            ax[i, j].imshow(img)
+            ax[u(i * batch_size + j)].imshow(img)
     return fig
+
+
+if __name__ == '__main__':
+    torch.manual_seed(42)
+    n_samples = 1
+    x = torch.randn(n_samples * 100).view(n_samples, 10, 10)
+    y = torch.randn(n_samples * 100).view(n_samples, 10, 10)
+    show_batch({'x': x, 'y': y})
+    plt.show()
