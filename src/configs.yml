@@ -16,10 +16,10 @@ misc:
 checkpoint:
   # if you load a checkpoint, run_name is ignored.
   # if save_every is empty, it won't save.
-  use_saved: False
+  use_saved: False # will continue in trains showing old config file.
   saved_path: 01_06_17-21-49_test_save_arch
   run_name:
-  save_every: 100
+  save_every:
 
 model:
   # is irrelevant if you're loading a saved model.
@@ -28,7 +28,7 @@ model:
   name: UNet
   use_bn: True
   use_double_bn: False
-  use_dropout: False
+  dropout: 0
 
 optim:
   loss: rmsle
@@ -40,9 +40,9 @@ optim:
 train:
   batch_size: 4
   epochs: 1000
-  subset_size: 10
+  subset_size:
   use_folds: True
-  print_every: 10
+  print_every: 1
 
 validation:
   batch_size: 10

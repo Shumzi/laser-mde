@@ -20,8 +20,8 @@ class UNetConvBlock(nn.Module):
             self.bn1 = nn.BatchNorm2d(out_size)
         if cfg['model']['use_bn']:
             self.bn2 = nn.BatchNorm2d(out_size)
-        if cfg['model']['use_dropout']:
-            self.dropout = nn.Dropout2d()
+        if cfg['model']['dropout'] is not None:
+            self.dropout = nn.Dropout2d(p=cfg['model']['dropout'])
 
     def forward(self, x):
         out = self.activation(self.conv(x))
@@ -30,7 +30,7 @@ class UNetConvBlock(nn.Module):
         out = self.activation(self.conv2(out))
         if cfg['model']['use_bn']:
             out = self.bn2(out)
-        if cfg['model']['use_dropout']:
+        if cfg['model']['dropout'] is not None:
             out = self.dropout(out)
         return out
 

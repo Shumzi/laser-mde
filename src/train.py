@@ -24,11 +24,12 @@ if cfg['misc']['verbose']:
 
 if cfg['misc']['use_trains']:
     if cfg['checkpoint']['use_saved']:
-        task = Task.init(project_name='ariel-mde', task_name=get_folder_name())
+        task = Task.get_task(project_name='ariel-mde', task_name=get_folder_name())
     else:
-        task = Task.init(project_name='ariel-mde', task_name=get_folder_name(), continue_last_task=cfg_model['use_saved'])
+        task = Task.init(project_name='ariel-mde', task_name=get_folder_name())
+        config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
+        cfg = task.connect(cfg)  # enabling configuration override by clearml
     clearml_logger = task.get_logger()
-    config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
 
 
 def weight_init(m):
@@ -365,8 +366,18 @@ def load_checkpoint():
 
 
 if __name__ == '__main__':
+    """
+    lr
+    batch_size
+    use_bn
+    use_double_bn
+    dropout
+    random_seed
+    flip_p
+    """
+    lr = []
+    # UniformParameterRange('config/data_augmentation/horizontal_flip', min_value=0, max_value=1),
+    # UniformParameterRange('config/data_augmentation/color_jitter', min_value=0, max_value=1),
+    # UniformParameterRange('config/data_augmentation/gaussian_blur', min_value=0, max_value=1),
+    # UniformParameterRange('config/data_augmentation/gaussian_noise', min_value=0, max_value=1)
     train()
-
-    # criterion, net, optim = get_net()
-
-    # cProfile.run('train()', sort='tottime')

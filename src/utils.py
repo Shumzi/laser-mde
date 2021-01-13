@@ -33,7 +33,7 @@ class ConfigHandler(metaclass=Singleton):
         return self.config[attr]
 
 
-cfg = ConfigHandler()
+cfg = yaml.safe_load(open('configs.yml', 'r'))
 current_time = datetime.now()
 rnd_seed = cfg['misc']['random_seed']
 if rnd_seed is not None:
@@ -67,6 +67,7 @@ def get_test_dir():
     """
     return os.path.join(cfg['dataset']['data_dir'], cfg['dataset']['test_foldername'])
 
+
 def get_dev():
     """
     Returns: device to be used for torch (preferably GPU).
@@ -94,6 +95,7 @@ def get_folder_name():
             return folder_name
     run_name = cfg_checkpoint['run_name']
     if run_name is None:
-      run_name = input('enter run name: ')
+        run_name = input('enter run name: ')
     cur_time = current_time.strftime("%m_%d_%H-%M-%S")
-    return cur_time + '_' + run_name
+    cfg_checkpoint['run_name'] = cur_time + '_' + run_name
+    return cfg_checkpoint['run_name']
