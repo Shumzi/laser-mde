@@ -1,6 +1,7 @@
 from __future__ import print_function, division
 
 import os
+from os.path import join
 import random
 from random import shuffle
 
@@ -31,9 +32,10 @@ class GeoposeDataset(Dataset):
             transform (callable, optional): Optional transform to be applied
                   on a sample.
         """
-        self.dir = '../data/geoPose3K'
+        self.dir = '/home/bina/PycharmProjects/laser-mde/data/geoPose3K'
         self.transform = transform
-        self.foldernames = np.array([fn for fn in os.listdir(self.dir) if os.path.isdir(fn) and not fn.startswith('.')])
+        self.foldernames = np.array(
+            [fn for fn in os.listdir(self.dir) if os.path.isdir(join(self.dir, fn)) and not fn.startswith('.')])
         self.foldernames.sort()
 
     def __len__(self):
@@ -43,25 +45,34 @@ class GeoposeDataset(Dataset):
         # batch requests
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        batch_folders = os.path.join(self.dir, self.foldernames[idx])
+        folder = os.path.join(self.dir, self.foldernames[idx])
         img_names = []
         depth_names = []
+        segmap_names = []
         loader = PFMLoader()
 
-        for folder in batch_folders:
-            for file in os.listdir(batch_folders):
-                if file == 'distance_crop.pfm':
-                    depth_names.append(os.path.join(folder, file))
-                if file.endswith(('.png', '.jpg', '.jpeg')):
-                    img_names.append(os.path.join(folder, file))
-        if len(img_names) != len(depth_names):
-            raise Exception(f'don\'t have same amount of images as depths.\n'
-                            f' imgs: {len(img_names)}\ndepths: {len(depth_names)}')
-        image = io.imread(img_names)
-        depth = io.imread(depth_names)
+        # for folder in batch_folders:
+        #     print(folder)
+        for file in os.listdir(folder):
+            if file == 'distance_crop.pfm':
+                depth_name = os.path.join(folder, file)
+                # depth_names.append(os.path.join(folder, file))
+            if file.endswith(('.png', '.jpg', '.jpeg')):
+                if file == 'labels_crop.png':
+                    # segmap_names.append(join(folder, file))
+                    segmap_name = join(folder, file)
+                else:
+                    # img_names.append(os.path.join(folder, file))
+                    img_name = os.path.join(folder, file)
+        if len(img_names) != len(depth_names) or len(segmap_names) != len(depth_names):
+            raise Exception(f'don\'t have same amount of images/segmaps as depths.\n'
+                            # f' imgs: {len(img_names)}\ndepths: {len(depth_names)}\n'
+                            f'folder: {folder}')
+        image = io.imread(img_name)
+        depth = loader.load_pfm(depth_name)
+        segmap = io.imread(segmap_name)
         # bad - all images are in different resolutions!!!
-        # also need to get depth from pfm, not as image.
-        sample = {'image': image, 'depth': depth, 'name': self.filenames[idx].strip('.png')}
+        sample = {'image': image, 'depth': depth, 'segmap': segmap, 'name': self.foldernames[idx]}
 
         if self.transform:
             sample = self.transform(sample)

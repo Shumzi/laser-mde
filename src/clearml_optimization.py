@@ -12,7 +12,7 @@ def optimize():
                      reuse_last_task_id=True)
     # experiment template to optimize in the hyper-parameter optimization
     args = {
-        'template_task_id': '9b56f8b81c254323a4e0b7e52ca45734',
+        'template_task_id': '4f8b87a1e1684be9a8e34ede211d3233',
         'run_as_service': False,
     }
     args = task.connect(args)
@@ -36,8 +36,8 @@ def optimize():
             # UniformParameterRange('config/data_augmentation/gaussian_blur', min_value=0, max_value=1),
             # UniformParameterRange('config/data_augmentation/gaussian_noise', min_value=0, max_value=1),
         ],
-        objective_metric_title=cfg['optim']['loss'],
-        objective_metric_series='loss',
+        objective_metric_title='Loss',
+        objective_metric_series='val',
         objective_metric_sign='min',
         max_number_of_concurrent_tasks=2,
         optimizer_class=OptimizerOptuna,

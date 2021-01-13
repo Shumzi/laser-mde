@@ -19,7 +19,7 @@ checkpoint:
   use_saved: False # will continue in trains showing old config file.
   saved_path: 01_06_17-21-49_test_save_arch
   run_name:
-  save_every:
+  save_every: 10
 
 model:
   # is irrelevant if you're loading a saved model.
@@ -27,8 +27,8 @@ model:
   weight_init: True
   name: UNet
   use_bn: True
-  use_double_bn: False
-  dropout: 0
+  use_double_bn: True
+  dropout: 0.2
 
 optim:
   loss: rmsle
@@ -39,7 +39,7 @@ optim:
 
 train:
   batch_size: 4
-  epochs: 1000
+  epochs: 100
   subset_size:
   use_folds: True
   print_every: 1
@@ -53,8 +53,8 @@ validation:
 
 data_augmentation:
   flip_p: 0.5
-  horizontal_flip: True
-  color_jitter: True
-  gaussian_blur: True
-  gaussian_noise: True
+  horizontal_flip: False
+  color_jitter: False
+  gaussian_blur: False
+  gaussian_noise: False
   # possibly add std and probability for augs over here?

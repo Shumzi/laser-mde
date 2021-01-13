@@ -15,22 +15,13 @@ import model
 import visualize as viz
 from data_loader import FarsightDataset, ToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
-from utils import get_dev, cfg, get_folder_name
+from utils import get_dev, cfg, get_folder_name, set_cfg
+import utils
 
 logger = logging.getLogger(__name__)
 if cfg['misc']['verbose']:
     logger.setLevel(logging.INFO)
     logging.basicConfig(level=logging.INFO)
-
-if cfg['misc']['use_trains']:
-    if cfg['checkpoint']['use_saved']:
-        task = Task.get_task(project_name='ariel-mde', task_name=get_folder_name())
-    else:
-        task = Task.init(project_name='ariel-mde', task_name=get_folder_name())
-        config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
-        cfg = task.connect(cfg)  # enabling configuration override by clearml
-    clearml_logger = task.get_logger()
-
 
 def weight_init(m):
     """
@@ -195,8 +186,12 @@ def print_stats(train_sample, val_sample,
                                     'val': val_score},
                            epoch)
         logger.warning(f'\nValidation loss: {val_score}')
+
+        # clearml_logger.report_scalar(title='rmsle', series='val', value=val_score, iteration=epoch + 1)
+        # clearml_logger.report_scalar(title='rmsle', series='train', value=train_loss, iteration=epoch + 1)
     else:
         writer.add_scalar('Loss/train', train_loss, epoch + 1)
+
     logger.warning(f'\ntrain loss: {train_loss}')
 
     print_hist = cfg['validation']['hist']
@@ -375,9 +370,25 @@ if __name__ == '__main__':
     random_seed
     flip_p
     """
-    lr = []
+    lrs = [1e-4, 1e-2, 1e-6]
+    for lr in lrs:
+        cfg = utils.cfg
+        cfg['optim']['lr'] = lr
+        cfg['checkpoint']['run_name'] = f'optim_lr_{lr}'
+        if cfg['misc']['use_trains']:
+            if cfg['checkpoint']['use_saved']:
+                task = Task.get_task(project_name='ariel-mde', task_name=get_folder_name())
+            else:
+                task = Task.init(project_name='ariel-mde', task_name=get_folder_name())
+                config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
+                cfg = task.connect(cfg)  # enabling configuration override by clearml
+                set_cfg(cfg)
+            clearml_logger = task.get_logger()
+        train()
+        if cfg['misc']['use_trains']:
+            task.close()
     # UniformParameterRange('config/data_augmentation/horizontal_flip', min_value=0, max_value=1),
     # UniformParameterRange('config/data_augmentation/color_jitter', min_value=0, max_value=1),
     # UniformParameterRange('config/data_augmentation/gaussian_blur', min_value=0, max_value=1),
     # UniformParameterRange('config/data_augmentation/gaussian_noise', min_value=0, max_value=1)
-    train()
+    # train()
