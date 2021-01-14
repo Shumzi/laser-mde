@@ -370,13 +370,14 @@ if __name__ == '__main__':
     random_seed
     flip_p
     """
-    lrs = [1e-4, 1e-2, 1e-6]
+    lrs = [1e-4, 1e-2]
     for lr in lrs:
         cfg = utils.cfg
         cfg['optim']['lr'] = lr
         cfg['checkpoint']['run_name'] = f'optim_lr_{lr}'
         if cfg['misc']['use_trains']:
             if cfg['checkpoint']['use_saved']:
+                cfg['checkpoint']['saved_path'] = cfg['checkpoint']['run_name']
                 task = Task.get_task(project_name='ariel-mde', task_name=get_folder_name())
             else:
                 task = Task.init(project_name='ariel-mde', task_name=get_folder_name())

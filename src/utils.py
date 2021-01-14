@@ -102,6 +102,7 @@ def get_folder_name():
     run_name = cfg_checkpoint['run_name']
     if run_name is None:
         run_name = input('enter run name: ')
-    cur_time = current_time.strftime("%m_%d_%H-%M-%S")
-    cfg_checkpoint['run_name'] = run_name + cur_time
+        cfg_checkpoint['run_name'] = run_name
+    # cur_time = current_time.strftime("%m_%d_%H-%M-%S")
+    # cfg_checkpoint['run_name'] = run_name + cur_time
     return run_name
