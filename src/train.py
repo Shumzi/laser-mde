@@ -190,6 +190,7 @@ def print_stats(train_sample, val_sample,
         # clearml_logger.report_scalar(title='rmsle', series='val', value=val_score, iteration=epoch + 1)
         # clearml_logger.report_scalar(title='rmsle', series='train', value=train_loss, iteration=epoch + 1)
     else:
+        # clearml_logger.report_scalar('Loss', 'train', train_loss, epoch + 1)
         writer.add_scalar('Loss/train', train_loss, epoch + 1)
 
     logger.warning(f'\ntrain loss: {train_loss}')
@@ -371,14 +372,20 @@ if __name__ == '__main__':
     flip_p
     """
     lrs = [1e-4, 1e-2]
-    for lr in lrs:
+    ids = ['4f8b87a1e1684be9a8e34ede211d3233',
+           '3e252824dbf0485ca4d16ce6e5daad88']
+    for i, lr in enumerate(lrs):
         cfg = utils.cfg
         cfg['optim']['lr'] = lr
         cfg['checkpoint']['run_name'] = f'optim_lr_{lr}'
         if cfg['misc']['use_trains']:
             if cfg['checkpoint']['use_saved']:
                 cfg['checkpoint']['saved_path'] = cfg['checkpoint']['run_name']
-                task = Task.get_task(project_name='ariel-mde', task_name=get_folder_name())
+                task = Task.init(continue_last_task=True,
+                                 reuse_last_task_id=ids[i])
+                task.set_initial_iteration(0)
+                # task = Task.get_task(task_id='4f8b87a1e1684be9a8e34ede211d3233')
+                    # project_name='ariel-mde', task_name=get_folder_name())
             else:
                 task = Task.init(project_name='ariel-mde', task_name=get_folder_name())
                 config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
