@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 import model
 import visualize as viz
-from data_loader import FarsightDataset, ToTensor, get_farsight_fold_dataset
+from data_loader import FarsightDataset, FarsightToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
 from utils import get_dev, cfg, get_folder_name, set_cfg
 import utils
@@ -279,7 +279,7 @@ def get_loaders():
             val_split = Subset(val_split, range(val_size))
     else:
         # TODO: generalize dataset to any dataset (hills for example).
-        ds = FarsightDataset(transform=ToTensor())
+        ds = FarsightDataset(transform=FarsightToTensor())
         if subset_size is not None:
             ds = Subset(ds, range(subset_size))
         n_val = int(len(ds) * val_percent)

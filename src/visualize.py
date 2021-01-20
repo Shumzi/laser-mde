@@ -3,6 +3,7 @@ from matplotlib import image
 import torch
 from mpl_toolkits.axes_grid1 import ImageGrid
 import numpy as np
+from PIL import Image
 
 
 class Unravel:
@@ -28,7 +29,6 @@ class Unravel:
 def show_batch(batch):
     """
     plot a batch of samples. can be images + depth + pred, or whatever.
-    input:
     Args:
         batch: dict of batch, each key being a different type of image.
                 If dict contains 'name' key, it'll be used as the filenames for each img tuple.
@@ -71,9 +71,19 @@ def show_batch(batch):
             if img_batch.shape[1] == 3:
                 # reshape back from C X H X W into H X W X C.
                 img_batch = img_batch.transpose(0, 2, 3, 1)
+            elif len(img_batch.shape) == 4 and img_batch.shape[1] == 1:
+                # Grayscale image that wasn't yet squeezed.
+                img_batch = img_batch.squeeze(1)
         for j, img in enumerate(img_batch):
             ax[u(i * batch_size + j)].imshow(img)
     return fig
+
+
+def blend_images(im1, im2):
+    im1 = im1.convert("RGBA")
+    im2 = im2.convert("RGBA")
+    blended = Image.blend(im1, im2, alpha=.5)
+    return blended
 
 
 if __name__ == '__main__':

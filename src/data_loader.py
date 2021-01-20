@@ -1,5 +1,3 @@
-from __future__ import print_function, division
-
 import os
 from os.path import join
 import random
@@ -9,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-# from pypfm import PFMLoader
+from pypfm import PFMLoader
 from skimage import io
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -20,32 +18,6 @@ import visualize as viz
 from utils import get_depth_dir, get_img_dir, get_test_dir
 
 cfg_aug = defs.cfg['data_augmentation']
-
-
-class CropToAspectRatio:
-    """
-    crop sides so as to get the required aspect ratio.
-    the image then can just be rescaled to required resolution.
-    """
-
-    def __init__(self, aspect_ratio, xres, yres):
-        self.aspect_ratio = aspect_ratio
-        self.xres, self.yres = xres, yres
-
-    def __call__(self, imgs: list[Image]):
-        for img in imgs:
-            pass
-            # TODO: cropsides
-            # img = TF.resize(img, (self.xres, self.yres)) - just use transform.Resize.
-        return imgs
-
-
-# TODO: afterward:
-#  if img>resolution: TF.center_crop()
-#  elif img<resolution: TF.pad()
-#  also: just use PIL.ImageOps.fit for resizing instead of shady thing I found online.
-#  and for cropping to AR just do some simple math.
-#  also don't forget mask for sky!
 
 
 class GeoposeDataset(Dataset):
@@ -94,15 +66,24 @@ class GeoposeDataset(Dataset):
             raise Exception(f'don\'t have same amount of images/segmaps as depths.\n'
                             # f' imgs: {len(img_names)}\ndepths: {len(depth_names)}\n'
                             f'folder: {folder}')
+        # image = Image.open(img_name)
         image = io.imread(img_name)
-        depth = loader.load_pfm(depth_name)
-        segmap = io.imread(segmap_name)
+        depth = np.array(loader.load_pfm(depth_name)[::-1])
+        segmap = io.imread(segmap_name)[:, :, :3]  # alpha channel is irrelevant (val is always 1).
         # bad - all images are in different resolutions!!!
         sample = {'image': image, 'depth': depth, 'segmap': segmap, 'name': self.foldernames[idx]}
 
         if self.transform:
             sample = self.transform(sample)
 
+        return sample
+
+
+class GeoposeToTensor():
+    def __call__(self, sample):
+        for k, v in sample.items():
+            if type(v).__name__ == 'ndarray':
+                sample[k] = TF.to_tensor(v)
         return sample
 
 
@@ -169,7 +150,7 @@ class FarsightTestDataset(Dataset):
         return {'image': image, 'name': self.filenames[idx].strip('.png')}
 
 
-class ToTensor(object):
+class FarsightToTensor(object):
     """Convert ndarrays in sample to Tensors
     and moves them into the correct range for conv operations."""
 
@@ -184,14 +165,13 @@ class ToTensor(object):
         # transpose conv works bad with 513x513 images, so take only 512x512 from farsight imgs.
         image = (image.transpose((2, 0, 1)).astype(np.float32) / 256)[:, :-1, :-1]
         # image = image*2-1
-        # same problem with depth. depth is in bins of 4m, max 250 (1000m). Moving to [0..1] 
+        # same problem with depth. depth is in bins of 4m, max 250 (1000m). Moving to [0..1]
         depth = (depth.astype(np.float32) / 250)[:-1, :-1]
         # depth is just H X W, so no problem here.
         image_tensor = torch.from_numpy(image).to(device=dev)
         depth_tensor = torch.from_numpy(depth).to(device=dev)
-        return {'image': image_tensor,
-                'depth': depth_tensor,
-                'name': sample['name']}
+        sample['image'], sample['depth'] = image_tensor, depth_tensor
+        return sample
 
 
 class RandomHorizontalFlip:
@@ -265,7 +245,7 @@ def get_farsight_fold_dataset(fold, transform=None):
     """
     if transform is None:
         transform = transforms.Compose([
-            ToTensor(),
+            FarsightToTensor(),
             RandomHorizontalFlip(),
             RandomColorJitter(),
             RandomGaussianBlur(),
@@ -288,7 +268,7 @@ def get_farsight_fold_dataset(fold, transform=None):
     if defs.cfg['validation']['shuffle_val']:
         shuffle(val_idxs)
     train_ds = FarsightDataset(transform, train_idxs)
-    val_ds = FarsightDataset(ToTensor(), val_idxs)
+    val_ds = FarsightDataset(FarsightToTensor(), val_idxs)
     return train_ds, val_ds
 
 
@@ -297,7 +277,7 @@ if __name__ == '__main__':
     basic test to see that the dataloader works ok.
     """
     tforms = transforms.Compose([
-        ToTensor(),
+        FarsightToTensor(),
         RandomHorizontalFlip(),
         RandomColorJitter(),
         RandomGaussianBlur(),
