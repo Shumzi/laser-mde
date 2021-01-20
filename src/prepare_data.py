@@ -1,6 +1,3 @@
-"""
-resizing and cropping images to 1024x680.
-"""
 import os
 from os.path import join
 import random
@@ -28,14 +25,15 @@ from visualize import blend_images
 from data_loader import GeoposeDataset, GeoposeToTensor
 
 
-class ResizeDepthToImg:
+class ResizeToImgShape:
     def __call__(self, sample):
         """
-        resize every meta-image (like depth, segmentation, etc.) to be same resolution as main image.
+        resize every meta-image (like depth, segmentation, etc.)
+        to be same resolution as main image.
         Returns: sample
 
         Args:
-            sample: data sample with 'depth' and 'image'.
+            sample: dict(Tensors), data sample with an 'image', 'depth' and possibly other images
         """
         _, h, w = sample['image'].shape
         for k, img in sample.items():
@@ -98,9 +96,9 @@ class ResizeToResolution:
     to be used after cropping to aspect ratio with CropToAspectRatio.
     """
 
-    def __init__(self, h, w):
-        self.h = h
-        self.w = w
+    def __init__(self, height, width):
+        self.h = height
+        self.w = width
 
     def __call__(self, sample):
         for k, img in sample.items():
@@ -120,9 +118,10 @@ class PadToResolution:
     """
     Pad all images in sample to meet required resolution. Pretty simple.
     """
-    def __init__(self, h, w):
-        self.h = h
-        self.w = w
+
+    def __init__(self, height, width):
+        self.h = height
+        self.w = width
 
     def __call__(self, sample):
         for k, img in sample.items():
@@ -142,16 +141,16 @@ class PadToResolution:
 
 
 class CenterAndCrop:
-    def __init__(self, h, w):
+    def __init__(self, height, width):
         """
         crop out center of image to be in resolution hxw.
 
         Args:
-            h: height (x)
-            w: width (y)
+            height: height (x)
+            width: width (y)
         """
-        self.h = h
-        self.w = w
+        self.h = height
+        self.w = width
 
     def __call__(self, sample):
         for k, v in sample.items():
@@ -174,14 +173,16 @@ if __name__ == '__main__':
     # s2 = next(iter(geoset_no_crop))
     # print single sample,
     # since if we don't crop we can't have them all in one batch.
-    geoset = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
-                                                          # ResizeDepthToImg(),
-                                                          # PadToResolution(680, 1024),
-                                                          # CenterAndCrop(680, 1024)]))
-                                                          CropToAspectRatio(3 / 2),
-                                                          ResizeToResolution(680, 1024)]))
-                                                          # NormalizeDepth()
-
+    h, w = 680, 1020
+    aspect_ratio = 3 / 2
+    pad_and_center = transforms.Compose([GeoposeToTensor(),
+                                         ResizeToImgShape(),
+                                         PadToResolution(h, w),
+                                         CenterAndCrop(h, w)])
+    crop_to_aspect_ratio_and_resize = transforms.Compose([GeoposeToTensor(),
+                                                          CropToAspectRatio(aspect_ratio=aspect_ratio),
+                                                          ResizeToResolution(h, w)])
+    geoset = GeoposeDataset(transform=crop_to_aspect_ratio_and_resize)
     s2 = next(iter(geoset))
     for k, v in s2.items():
         if torch.is_tensor(v):
@@ -192,5 +193,3 @@ if __name__ == '__main__':
     # plt.show()
     viz.show_batch(s2)
     plt.show()
-    # rd = ResizeDepth()
-    # rd(sample)
