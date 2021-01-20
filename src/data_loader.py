@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from pypfm import PFMLoader
+# from pypfm import PFMLoader
 from skimage import io
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -30,7 +30,7 @@ class GeoposeDataset(Dataset):
             transform (callable, optional): Optional transform to be applied
                   on a sample.
         """
-        self.dir = '/home/bina/PycharmProjects/laser-mde/data/geoPose3K'
+        self.dir = defs.cfg['dataset']['geopose_path']
         self.transform = transform
         self.foldernames = np.array(
             [fn for fn in os.listdir(self.dir) if os.path.isdir(join(self.dir, fn)) and not fn.startswith('.')])
@@ -43,11 +43,12 @@ class GeoposeDataset(Dataset):
         # batch requests
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        folder = os.path.join(self.dir, self.foldernames[idx])
+        # folder = os.path.join(self.dir, self.foldernames[idx])
+        folder = os.path.join(self.dir, 'flickr_sge_987018572_c163ca22e5_1146_30222664@N00')
         img_names = []
         depth_names = []
         segmap_names = []
-        loader = PFMLoader()
+        # loader = PFMLoader()
 
         # for folder in batch_folders:
         #     print(folder)
@@ -68,10 +69,10 @@ class GeoposeDataset(Dataset):
                             f'folder: {folder}')
         # image = Image.open(img_name)
         image = io.imread(img_name)
-        depth = np.array(loader.load_pfm(depth_name)[::-1])
+        # depth = np.array(loader.load_pfm(depth_name)[::-1])
         segmap = io.imread(segmap_name)[:, :, :3]  # alpha channel is irrelevant (val is always 1).
         # bad - all images are in different resolutions!!!
-        sample = {'image': image, 'depth': depth, 'segmap': segmap, 'name': self.foldernames[idx]}
+        sample = {'image': image, 'segmap': segmap, 'name': self.foldernames[idx]}
 
         if self.transform:
             sample = self.transform(sample)

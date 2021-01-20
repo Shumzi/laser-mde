@@ -51,7 +51,7 @@ def show_batch(batch):
     batch_size = len(values[0])
     tuple_size = len(values)  # amount of images in per sample we'll be displaying.
     u = Unravel(tuple_size, batch_size)
-    fig, ax = plt.subplots(tuple_size, batch_size, figsize=(batch_size * 4, tuple_size * 4))
+    fig, ax = plt.subplots(tuple_size, batch_size, figsize=(batch_size * 4 + 2, tuple_size * 4))
     # image type
     for i, type_name in enumerate(keys):
         ax[u(i * batch_size)].set_ylabel(type_name, fontsize='x-large')

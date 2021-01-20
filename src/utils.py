@@ -6,6 +6,7 @@ import yaml
 from datetime import datetime
 import random
 import numpy as np
+from matplotlib import pyplot as plt
 
 
 class Singleton(type):
@@ -33,7 +34,7 @@ class ConfigHandler(metaclass=Singleton):
         return self.config[attr]
 
 
-cfg = yaml.safe_load(open('/home/bina/PycharmProjects/laser-mde/src/configs.yml', 'r'))
+cfg = yaml.safe_load(open('configs.yml', 'r', encoding='utf-8'))
 
 
 def set_cfg(new_cfg):
@@ -106,3 +107,8 @@ def get_folder_name():
     # cur_time = current_time.strftime("%m_%d_%H-%M-%S")
     # cfg_checkpoint['run_name'] = run_name + cur_time
     return run_name
+
+
+def tensor_imshow(img):
+    plt.imshow(img.numpy().transpose((1, 2, 0)))
+    plt.show()

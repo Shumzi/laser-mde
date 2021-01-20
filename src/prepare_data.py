@@ -1,8 +1,6 @@
 """
 resizing and cropping images to 1024x680.
 """
-from __future__ import print_function, division
-
 import os
 from os.path import join
 import random
@@ -12,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from pypfm import PFMLoader
+# from pypfm import PFMLoader
 from skimage import io
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -21,7 +19,7 @@ from PIL import ImageOps
 
 import utils as defs
 import visualize as viz
-from utils import get_depth_dir, get_img_dir, get_test_dir
+from utils import get_depth_dir, get_img_dir, get_test_dir, tensor_imshow
 from PIL import Image
 import os
 from os.path import join
@@ -30,82 +28,127 @@ from visualize import blend_images
 from data_loader import GeoposeDataset, GeoposeToTensor
 
 
-# Function to change the image size
-def change_image_size(maxWidth,
-                      maxHeight,
-                      image):
-    widthRatio = maxWidth / image.size[0]
-    heightRatio = maxHeight / image.size[1]
-
-    newWidth = int(widthRatio * image.size[0])
-    newHeight = int(heightRatio * image.si  ze[1])
-
-    newImage = image.resize((newWidth, newHeight))
-    return newImage
-
-
-class ResizeDepth:
+class ResizeDepthToImg:
     def __call__(self, sample):
         """
-        resize depth to be same resolution as image it's giving depth info on.
+        resize every meta-image (like depth, segmentation, etc.) to be same resolution as main image.
         Returns: sample
 
         Args:
             sample: data sample with 'depth' and 'image'.
         """
-        image, depth, seg = sample['image'], sample['depth'], sample['segmap']
-        # plt.imshow(depth.squeeze().numpy())
-        # plt.show()
-        depth_resized = TF.resize(depth, (image.shape[1], image.shape[2]))
-        seg_resized = TF.resize(seg, (image.shape[1], image.shape[2]))
-        # TODO: bilinear interpolation? good or bad in my case?
-        #   for sure screws up the -1's at the end.. Fix later.
-        # print(f'old max: {depth.max()} old min: {depth.min()}\n'
-        #       f'new max: {depth_resized.max()}, new min: {depth_resized.min()}')
-        # plt.imshow(np_resized)
-        # plt.show()
+        _, h, w = sample['image'].shape
+        for k, img in sample.items():
+            if k == 'image':
+                continue
+            if torch.is_tensor(img):
+                # using Nearest, bc we want values to stay mostly the same,
+                # and it's worse to have -.8 than some out of place -1's (for sky values).
+                # segmap really can't be interpolated, bc values are supposed to be constant.
+                img = TF.resize(img, (h, w), interpolation=Image.NEAREST)
+                tensor_imshow(img)
+                sample[k] = img
+
         # blended = blend_images(TF.to_pil_image(image), TF.to_pil_image(depth_resized))
         # plt.imshow(blended)
         # plt.show()
-        sample['depth'] = depth_resized
-        sample['segmap'] = seg_resized
         return sample
 
 
 class CropToAspectRatio:
     """
-    crop sides so as to get the required aspect ratio.
-    the image then can just be rescaled to required resolution.
+    crop sample images to required aspect ratio.
+    the image then can just be rescaled to the required resolution.
+    assumes all tensors are 3d, and grayscale images are of shape 1xHxW.
     """
 
     def __init__(self, aspect_ratio):
         self.aspect_ratio = aspect_ratio
 
-    def __call__(self, imgs):
-        for img in imgs:
-            # if img.size
-            pass
-            # TODO: cropsides
-            # img = TF.resize(img, (self.xres, self.yres)) - just use transform.Resize.
-        return imgs
+    def __call__(self, sample):
+        for k, img in sample.items():
+            if torch.is_tensor(img):
+                # tensor_imshow(img)
+                h, w = img.shape[1], img.shape[2]
+                if h * self.aspect_ratio > w:
+                    disparity = int(h - w // self.aspect_ratio)
+                    top = disparity // 2
+                    height = h - disparity
+                    img = TF.crop(img, top=top, left=0, height=height, width=w)
+                    # tensor_imshow(img)
+                    assert img.shape[1] * self.aspect_ratio == float(w), 'aspect ratio still not checking out.'
+                    sample[k] = img
+                elif h * self.aspect_ratio < w:
+                    disparity = int(w - h * self.aspect_ratio)
+                    left = disparity // 2
+                    width = (w - ((disparity + 1) // 2 * 2))  # //2*2 to fix possible misalignment.
+                    img = TF.crop(img, top=0, left=left, height=h, width=width)
+                    # tensor_imshow(img)
+                    assert img.shape[1] * self.aspect_ratio == float(w), 'aspect ratio still not checking out.'
+                    sample[k] = img
+        return sample
 
 
-# TODO: afterward:
-#  if img>resolution: TF.center_crop()
-#  elif img<resolution: TF.pad()
-#  also: just use PIL.ImageOps.fit for resizing instead of shady thing I found online.
-#  and for cropping to AR just do some simple math.
-#  also don't forget mask for sky!
+class ResizeToResolution:
+    """
+    resize all images in sample to be set resolution.
+    Interpolation:
+        - 'image' is resized using interpolation
+        - all other images just fill with nearest value.
+    to be used after cropping to aspect ratio with CropToAspectRatio.
+    """
+
+    def __init__(self, h, w):
+        self.h = h
+        self.w = w
+
+    def __call__(self, sample):
+        for k, img in sample.items():
+            if torch.is_tensor(img):
+                # tensor_imshow(img)
+                if k == 'image':
+                    sample[k] = TF.resize(img, (self.h, self.w))
+                else:
+                    sample[k] = TF.resize(img, (self.h, self.w),
+                                          interpolation=Image.NEAREST)  # don't want -1's and shit to get f'd up.
+                    # TODO: assert that values of images didn't change.
+                # tensor_imshow(sample[k])
+        return sample
+
+
+class PadToResolution:
+    """
+    Pad all images in sample to meet required resolution. Pretty simple.
+    """
+    def __init__(self, h, w):
+        self.h = h
+        self.w = w
+
+    def __call__(self, sample):
+        for k, img in sample.items():
+            if torch.is_tensor(img):
+                # tensor_imshow(img)
+                sample_h, sample_w = img.shape[1], img.shape[2]
+                pad_h, pad_w = 0, 0
+                if sample_h < self.h:
+                    pad_h = self.h - sample_h
+                if sample_w < self.w:
+                    pad_w = self.w - sample_w
+                # pad to get to required resolution,
+                # add 1 extra pad for right and bottom if resolution diff is odd.
+                sample[k] = TF.pad(img, (pad_w // 2, pad_h // 2, (pad_w + 1) // 2, (pad_h + 1) // 2))
+                # tensor_imshow(sample[k])
+        return sample
 
 
 class CenterAndCrop:
     def __init__(self, h, w):
         """
-        transform images to all be same resolution hxw.
+        crop out center of image to be in resolution hxw.
 
         Args:
-            h: height (x?)
-            w: width (y?)
+            h: height (x)
+            w: width (y)
         """
         self.h = h
         self.w = w
@@ -113,33 +156,40 @@ class CenterAndCrop:
     def __call__(self, sample):
         for k, v in sample.items():
             if torch.is_tensor(v):
-                # plt.imshow(v.numpy().transpose((1, 2, 0)))
-                # plt.show()
+                # tensor_imshow(v)
                 sample[k] = TF.center_crop(v, (self.h, self.w))
-                # plt.imshow(sample[k].numpy().transpose((1, 2, 0)))
-                # plt.show()
+                # tensor_imshow(sample[k])
         return sample
 
 
 if __name__ == '__main__':
-    geoset = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
-                                                          ResizeDepth(),
-                                                          CenterAndCrop(680, 1024)
-                                                          ]))
-    geoset_no_crop = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
-                                                                  ResizeDepth()]))
-    dl = DataLoader(geoset, batch_size=4)
-    batch = next(iter(dl))
-    s2 = next(iter(geoset_no_crop))
+    # geoset = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
+    #                                                       ResizeDepth(),
+    #                                                       CenterAndCrop(680, 1024)
+    #                                                       ]))
+    # geoset_no_crop = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
+    #                                                               ResizeDepth()]))
+    # dl = DataLoader(geoset, batch_size=4)
+    # batch = next(iter(dl))
+    # s2 = next(iter(geoset_no_crop))
     # print single sample,
     # since if we don't crop we can't have them all in one batch.
+    geoset = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
+                                                          # ResizeDepthToImg(),
+                                                          # PadToResolution(680, 1024),
+                                                          # CenterAndCrop(680, 1024)]))
+                                                          CropToAspectRatio(3 / 2),
+                                                          ResizeToResolution(680, 1024)]))
+                                                          # NormalizeDepth()
+
+    s2 = next(iter(geoset))
     for k, v in s2.items():
         if torch.is_tensor(v):
             s2[k] = v.unsqueeze(0)
         elif type(v).__name__ == 'str_':
             s2[k] = [v]
-    viz.show_batch(batch)
-    plt.show()
+    # viz.show_batch(batch)
+    # plt.show()
     viz.show_batch(s2)
     plt.show()
     # rd = ResizeDepth()
