@@ -9,17 +9,43 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from pypfm import PFMLoader
+# from pypfm import PFMLoader
 from skimage import io
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from torchvision.transforms import functional as TF
-
+from PIL import Image, ImageOps
 import utils as defs
 import visualize as viz
 from utils import get_depth_dir, get_img_dir, get_test_dir
 
 cfg_aug = defs.cfg['data_augmentation']
+
+
+class CropToAspectRatio:
+    """
+    crop sides so as to get the required aspect ratio.
+    the image then can just be rescaled to required resolution.
+    """
+
+    def __init__(self, aspect_ratio, xres, yres):
+        self.aspect_ratio = aspect_ratio
+        self.xres, self.yres = xres, yres
+
+    def __call__(self, imgs: list[Image]):
+        for img in imgs:
+            pass
+            # TODO: cropsides
+            # img = TF.resize(img, (self.xres, self.yres)) - just use transform.Resize.
+        return imgs
+
+
+# TODO: afterward:
+#  if img>resolution: TF.center_crop()
+#  elif img<resolution: TF.pad()
+#  also: just use PIL.ImageOps.fit for resizing instead of shady thing I found online.
+#  and for cropping to AR just do some simple math.
+#  also don't forget mask for sky!
 
 
 class GeoposeDataset(Dataset):
