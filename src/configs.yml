@@ -2,25 +2,28 @@
 
 
 dataset:
+  name: geopose
   data_dir: ../data/farsight
   depth_foldername: depth_without_bad_images
   img_foldername: img_without_bad_images
   test_foldername: test
-  geopose_path: 'D:\Users\Ariel\Documents\DS הכשרה_\15. MDE with laser reference point\laser-mde\data\geoPose3K_img_and_depth'
-
+  geopose_path: '../data/geoPose3K'
+  aspect_ratio: 1
+  h: 512
+  w: 512
 misc:
   verbose: True
   random_seed: 42 # if none won't have constant seed.
   use_cuda: True
-  use_trains: True
+  use_trains: False
 
 checkpoint:
   # if you load a checkpoint, run_name is ignored.
   # if save_every is empty, it won't save.
-  use_saved: True # will continue in trains showing old config file.
+  use_saved: False # will continue in trains showing old config file.
   saved_path:
   run_name:
-  save_every: 10
+  save_every:
 
 model:
   # is irrelevant if you're loading a saved model.
@@ -47,7 +50,7 @@ train:
 
 validation:
   batch_size: 10
-  val_round: True
+  val_round: False
   val_percent: 0.2
   shuffle_val: True
   hist: False

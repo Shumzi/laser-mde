@@ -110,6 +110,4 @@ def get_folder_name():
     return run_name
 
 
-def tensor_imshow(img):
-    plt.imshow(img.numpy().transpose((1, 2, 0)))
-    plt.show()
+

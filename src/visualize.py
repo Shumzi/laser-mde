@@ -86,6 +86,11 @@ def blend_images(im1, im2):
     return blended
 
 
+def tensor_imshow(img):
+    plt.imshow(img.cpu().numpy().transpose((1, 2, 0)))
+    plt.show()
+
+
 if __name__ == '__main__':
     torch.manual_seed(42)
     n_samples = 1

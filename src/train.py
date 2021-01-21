@@ -13,8 +13,9 @@ from tqdm import tqdm
 
 import model
 import visualize as viz
-from data_loader import FarsightDataset, FarsightToTensor, get_farsight_fold_dataset
+from data_loader import FarsightDataset, GeoposeDataset, FarsightToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
+from prepare_data import crop_to_aspect_ratio_and_resize
 from utils import get_dev, cfg, get_folder_name, set_cfg
 import utils
 
@@ -128,7 +129,8 @@ def step(criterion, img, gt_depth, net, optimizer, mask=None):
     pred_depth = net(img)
     if mask:
         pred_depth.register_hook(lambda grad: grad * mask)
-    loss = criterion(pred_depth, gt_depth)
+        # TODO: maybe just do criterion on pred and gt * mask?
+    loss = criterion(pred_depth, gt_depth.squeeze())
     loss.backward()
     optimizer.step()
     return loss, pred_depth
@@ -259,8 +261,43 @@ def get_criterion():
         raise ValueError("can only use rmsle or mse")
     return criterion
 
-
 def get_loaders():
+    ds_name = cfg['dataset']['name']
+    if ds_name == 'farsight':
+        return get_farsight_loaders()
+    elif ds_name == 'geopose':
+        return get_geopose_loaders()
+
+
+def get_geopose_loaders():
+    # TODO: make both into one simple loader, lots of copied code here.
+    cfg_train = cfg['train']
+    cfg_validation = cfg['validation']
+    batch_size = cfg_train['batch_size']
+    batch_size_val = cfg['validation']['batch_size']
+    val_percent = cfg_validation['val_percent']
+    subset_size = cfg_train['subset_size']
+    ds = GeoposeDataset(transform=crop_to_aspect_ratio_and_resize())
+    if subset_size is not None:
+        ds = Subset(ds, range(subset_size))
+    n_val = int(len(ds) * val_percent)
+    n_train = len(ds) - n_val
+    train_split, val_split = random_split(ds,
+                                          [n_train, n_val],
+                                          generator=torch.Generator().manual_seed(42))
+    train_loader = DataLoader(train_split,
+                              shuffle=False,
+                              batch_size=batch_size,
+                              num_workers=0)
+    val_loader = DataLoader(val_split,
+                            shuffle=False,
+                            batch_size=batch_size_val,
+                            num_workers=0)
+    return train_loader, val_loader
+
+
+
+def get_farsight_loaders():
     """
     get data loaders for train set and val set
 
