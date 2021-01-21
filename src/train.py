@@ -23,6 +23,7 @@ if cfg['misc']['verbose']:
     logger.setLevel(logging.INFO)
     logging.basicConfig(level=logging.INFO)
 
+
 def weight_init(m):
     """
     initialize weights of net to Kaiming and biases to zero,
@@ -116,7 +117,7 @@ def train():
         save_checkpoint(epochs - 1, net, optimizer, 0)
 
 
-def step(criterion, img, gt_depth, net, optimizer):
+def step(criterion, img, gt_depth, net, optimizer, mask=None):
     """
     single forward and backward step with a specific image batch.
 
@@ -125,6 +126,8 @@ def step(criterion, img, gt_depth, net, optimizer):
     """
     optimizer.zero_grad()
     pred_depth = net(img)
+    if mask:
+        pred_depth.register_hook(lambda grad: grad * mask)
     loss = criterion(pred_depth, gt_depth)
     loss.backward()
     optimizer.step()
@@ -385,7 +388,7 @@ if __name__ == '__main__':
                                  reuse_last_task_id=ids[i])
                 task.set_initial_iteration(0)
                 # task = Task.get_task(task_id='4f8b87a1e1684be9a8e34ede211d3233')
-                    # project_name='ariel-mde', task_name=get_folder_name())
+                # project_name='ariel-mde', task_name=get_folder_name())
             else:
                 task = Task.init(project_name='ariel-mde', task_name=get_folder_name())
                 config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')

@@ -84,7 +84,7 @@ class GeoposeToTensor():
     def __call__(self, sample):
         for k, v in sample.items():
             if type(v).__name__ == 'ndarray':
-                sample[k] = TF.to_tensor(v)
+                sample[k] = TF.to_tensor(v).to(device=defs.get_dev())
         return sample
 
 

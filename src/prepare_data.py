@@ -161,6 +161,19 @@ class CenterAndCrop:
         return sample
 
 
+class ExtractSkyMask:
+    def __call__(self, sample):
+        depth = sample['depth']
+        skymask = depth[depth == -1]
+        sample['skymask'] = skymask
+        return sample
+
+
+class ExtractSegmentationMask:
+    pass
+    # TODO: next week, the whole segmentation git.
+
+
 if __name__ == '__main__':
     # geoset = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
     #                                                       ResizeDepth(),
@@ -181,7 +194,8 @@ if __name__ == '__main__':
                                          CenterAndCrop(h, w)])
     crop_to_aspect_ratio_and_resize = transforms.Compose([GeoposeToTensor(),
                                                           CropToAspectRatio(aspect_ratio=aspect_ratio),
-                                                          ResizeToResolution(h, w)])
+                                                          ResizeToResolution(h, w),
+                                                          ExtractSkyMask()])
     geoset = GeoposeDataset(transform=crop_to_aspect_ratio_and_resize)
     s2 = next(iter(geoset))
     for k, v in s2.items():
