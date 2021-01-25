@@ -10,12 +10,12 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Subset, random_split
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-
+from matplotlib import pyplot as plt
 import model
 import visualize as viz
 from data_loader import FarsightDataset, GeoposeDataset, FarsightToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
-from prepare_data import crop_to_aspect_ratio_and_resize
+from prepare_data import crop_to_aspect_ratio_and_resize, pad_and_center
 from utils import get_dev, cfg, get_folder_name, set_cfg
 import utils
 
@@ -57,7 +57,9 @@ def train():
     epochs = cfg_train['epochs']
     print_every = cfg_train['print_every']
     save_every = cfg_checkpoint['save_every']
+    # use_writer = cfg['misc']['use_writer']
     folder_name = get_folder_name()
+    # if use_writer:
     writer = SummaryWriter(os.path.join('runs', folder_name))
     train_loader, val_loader = get_loaders()
     n_batches = len(train_loader)
@@ -85,6 +87,7 @@ def train():
                 img, gt_depth = data['image'], data['depth']
                 loss, pred_depth = step(criterion, img, gt_depth, net, optimizer)
                 loss_value = loss.item()
+                assert loss_value == loss_value, 'loss is nan! tf?'
                 pbar.set_postfix(**{'loss (batch)': loss_value})
                 running_loss += loss_value
                 pbar.update()
@@ -210,12 +213,12 @@ def print_stats(train_sample, val_sample,
     logger.info('logging images...')
     fig = viz.show_batch(train_sample)
     fig.suptitle(f'train, epoch {epoch}', fontsize='xx-large')
-    # plt.show()
+    plt.show()
     writer.add_figure(tag='viz/train', figure=fig, global_step=epoch)
     if val_sample is not None:
         fig = viz.show_batch(val_sample)
         fig.suptitle(f'val, epoch {epoch}', fontsize='xx-large')
-        # plt.show()
+        plt.show()
         writer.add_figure(tag='viz/val', figure=fig, global_step=epoch)
 
 
@@ -234,7 +237,11 @@ def get_net():
     cfg_optim = cfg['optim']
     model_name = cfg_model['name'].lower()
     if model_name == 'unet':
-        net = UNet()
+        if cfg['dataset']['name'] == 'geopose':
+            net = UNet(sigmoid=True)
+            # TODO: fix if you don't do minmax scaling in the end.
+        else:
+            net = UNet()
     elif model_name == 'toynet':
         net = model.toyNet()
     else:
@@ -261,6 +268,7 @@ def get_criterion():
         raise ValueError("can only use rmsle or mse")
     return criterion
 
+
 def get_loaders():
     ds_name = cfg['dataset']['name']
     if ds_name == 'farsight':
@@ -277,7 +285,7 @@ def get_geopose_loaders():
     batch_size_val = cfg['validation']['batch_size']
     val_percent = cfg_validation['val_percent']
     subset_size = cfg_train['subset_size']
-    ds = GeoposeDataset(transform=crop_to_aspect_ratio_and_resize())
+    ds = GeoposeDataset(transform=pad_and_center())
     if subset_size is not None:
         ds = Subset(ds, range(subset_size))
     n_val = int(len(ds) * val_percent)
@@ -294,7 +302,6 @@ def get_geopose_loaders():
                             batch_size=batch_size_val,
                             num_workers=0)
     return train_loader, val_loader
-
 
 
 def get_farsight_loaders():

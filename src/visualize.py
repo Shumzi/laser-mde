@@ -4,6 +4,10 @@ import torch
 from mpl_toolkits.axes_grid1 import ImageGrid
 import numpy as np
 from PIL import Image
+import data_loader
+from torchvision.transforms import functional as TF
+from matplotlib import cm
+import matplotlib.colors as colors
 
 
 class Unravel:
@@ -47,13 +51,15 @@ def show_batch(batch):
         filenames = batch.pop('name')
     except:
         filenames = None
-    keys, values = list(batch.keys()), list(batch.values())  # images_batches: list(batches)
-    batch_size = len(values[0])
-    tuple_size = len(values)  # amount of images in per sample we'll be displaying.
+    image_type_names, image_types = list(batch.keys()), list(batch.values())  # image_type_names: image, depth, etc.
+    # for image_type in image_types:
+    #     if len(image_type.shape) == 2 or (len(image_type.shape) == 3 and
+    batch_size = image_types[0].shape[0]
+    tuple_size = len(image_types)  # amount of images in per sample we'll be displaying.
     u = Unravel(tuple_size, batch_size)
     fig, ax = plt.subplots(tuple_size, batch_size, figsize=(batch_size * 4 + 2, tuple_size * 4))
     # image type
-    for i, type_name in enumerate(keys):
+    for i, type_name in enumerate(image_type_names):
         ax[u(i * batch_size)].set_ylabel(type_name, fontsize='x-large')
     # sample number
     if filenames is not None:
@@ -65,36 +71,93 @@ def show_batch(batch):
         for j in range(batch_size):
             ax[u(j)].set_title('sample #{}'.format(j))
     # display actual image.
-    for i, img_batch in enumerate(values):
-        if torch.is_tensor(img_batch):
-            img_batch = img_batch.detach().cpu().numpy()
-            if img_batch.shape[1] == 3:
+    for i, image_type in enumerate(image_types):
+        if image_type_names[i] == 'depth':
+            norm = colors.LogNorm()
+        else:
+            norm = None
+        if torch.is_tensor(image_type):
+            image_type = image_type.detach().cpu().numpy()
+            if image_type.shape[1] == 3:
                 # reshape back from C X H X W into H X W X C.
-                img_batch = img_batch.transpose(0, 2, 3, 1)
-            elif len(img_batch.shape) == 4 and img_batch.shape[1] == 1:
+                image_type = image_type.transpose(0, 2, 3, 1)
+            elif len(image_type.shape) == 4 and image_type.shape[1] == 1:
                 # Grayscale image that wasn't yet squeezed.
-                img_batch = img_batch.squeeze(1)
-        for j, img in enumerate(img_batch):
-            ax[u(i * batch_size + j)].imshow(img)
+                image_type = image_type.squeeze(1)
+            elif len(image_type.shape) == 2:
+                image_type = image_type.unsqueeze(0)
+        for j, img in enumerate(image_type):
+            ax[u(i * batch_size + j)].imshow(img, norm=norm)
     return fig
 
 
+def show_sample(sample):
+    for k, v in sample.items():
+        if k == 'name':
+            sample[k] = [v]
+        else:
+            sample[k] = v[np.newaxis]
+    return show_batch(sample)
+
+
 def blend_images(im1, im2):
+    # im = Image.fromarray(np.uint8(cm.(im1) * 255))
+    if type(im1) == np.ndarray:
+        im1 = Image.fromarray(im1)
+    elif torch.is_tensor(im1):
+        im1 = TF.to_pil_image(im1)
+    if type(im2) == np.ndarray:
+        im2 = Image.fromarray(im2)
+    elif torch.is_tensor(im2):
+        im2 = TF.to_pil_image(im2)
     im1 = im1.convert("RGBA")
     im2 = im2.convert("RGBA")
-    blended = Image.blend(im1, im2, alpha=.5)
+    blended = Image.blend(im1, im2, alpha=.25)
     return blended
 
 
+def get_sub_batch(batch, subsize):
+    """
+    return first subsize samples in batch.
+    Args:
+        batch: batch of samples.
+        subsize:
+
+    Returns: sub-batch.
+
+    """
+    minibatch = {}
+    for k,v in batch.items():
+        minibatch[k] = v[:subsize]
+    return minibatch
 def tensor_imshow(img):
-    plt.imshow(img.cpu().numpy().transpose((1, 2, 0)))
-    plt.show()
+    """
+    plots tensor img on plt. doesn't plt.show it though.
+    Args:
+        img: Tensor of shape (CxHxW)
+
+    Returns: fig of image.
+
+    """
+    return plt.imshow(img.cpu().numpy().transpose((1, 2, 0)))
+
+
+def show_geopose_sample_with_blend(sample):
+    """
+    util for showing a specific sample in geopose dataset with blend.
+    for debugging purposes.
+    Returns: fig of plotted image.
+
+    """
+    sample['blend'] = blend_images(sample['image'], sample['depth'])
+    return show_sample(sample)
 
 
 if __name__ == '__main__':
-    torch.manual_seed(42)
-    n_samples = 1
-    x = torch.randn(n_samples * 100).view(n_samples, 10, 10)
-    y = torch.randn(n_samples * 100).view(n_samples, 10, 10)
-    show_batch({'x': x, 'y': y})
-    plt.show()
+    pass
+    # torch.manual_seed(42)
+    # n_samples = 1
+    # x = torch.randn(n_samples * 100).view(n_samples, 10, 10)
+    # y = torch.randn(n_samples * 100).view(n_samples, 10, 10)
+    # show_batch({'x': x, 'y': y})
+    # plt.show()

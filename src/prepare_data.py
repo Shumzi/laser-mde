@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-# from pypfm import PFMLoader
+from pypfm import PFMLoader
 from skimage import io
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.transforms import functional as TF
 from PIL import ImageOps
@@ -21,8 +21,9 @@ from PIL import Image
 import os
 from os.path import join
 from matplotlib import pyplot as plt
-from visualize import blend_images
 from data_loader import GeoposeDataset, GeoposeToTensor
+from skimage.transform import resize
+import cv2
 
 
 class ResizeToImgShape:
@@ -35,7 +36,7 @@ class ResizeToImgShape:
         Args:
             sample: dict(Tensors), data sample with an 'image', 'depth' and possibly other images
         """
-        _, h, w = sample['image'].shape
+        c, h, w = sample['image'].shape
         for k, img in sample.items():
             if k == 'image':
                 continue
@@ -44,9 +45,11 @@ class ResizeToImgShape:
                 # and it's worse to have -.8 than some out of place -1's (for sky values).
                 # segmap really can't be interpolated, bc values are supposed to be constant.
                 img = TF.resize(img, (h, w), interpolation=Image.NEAREST)
-                # viz.tensor_imshow(img)
                 sample[k] = img
-
+                # viz.tensor_imshow(img)
+            elif type(img) == np.ndarray:
+                img = resize(img, (c, h))
+                sample[k] = img
         # blended = blend_images(TF.to_pil_image(image), TF.to_pil_image(depth_resized))
         # plt.imshow(blended)
         # plt.show()
@@ -175,20 +178,67 @@ class ExtractSegmentationMask:
     # TODO: next week, the whole segmentation git.
 
 
+class NormalizeDepth:
+    def __call__(self, sample):
+        depth_mean = torch.Tensor([3808.661])
+        depth_std = torch.Tensor([3033.6562])
+        # adding min to norm so all values will be above 0 (since we're using rmsle).
+        sample['depth'] = TF.normalize(sample['depth'], depth_mean, depth_std) + torch.Tensor(
+            depth_mean - 1 / depth_std).to(device=defs.get_dev())
+        return sample
+
+class NormalizeImg:
+    """normalize images and depths based on our crop results."""
+
+    # {'image': tensor([0.4168, 0.4701, 0.5008]), 'depth': array([3808.661], dtype=float32)}
+    # {'image': tensor([0.1869, 0.1803, 0.1935]), 'depth': array([3033.6562], dtype=float32)}
+    def __call__(self, sample):
+        image_mean = torch.Tensor([0.4168, 0.4701, 0.5008])
+        image_std = torch.Tensor([0.1869, 0.1803, 0.1935])
+        sample['image'] = TF.normalize(sample['image'], image_mean, image_std)
+        return sample
+
+
+class NormMinMaxDepth:
+    def __call__(self, sample):
+        min = -1
+        max = 254957
+        depth = sample['depth']
+        depth -= 1
+        depth /= max
+        sample['depth'] = depth
+        return sample
+
+
 def crop_to_aspect_ratio_and_resize():
     cfg_ds = defs.cfg['dataset']
     aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
-    return transforms.Compose([GeoposeToTensor(),
+    return transforms.Compose([FillNaNsFFS(),
+                               GeoposeToTensor(),
                                CropToAspectRatio(aspect_ratio=aspect_ratio),
                                ResizeToResolution(h, w),
-                               ExtractSkyMask()])
+                               NormalizeImg(),
+                               NormMinMaxDepth()])
+                               # ExtractSkyMask()])
 
 
 def pad_and_center():
-    return transforms.Compose([GeoposeToTensor(),
+    cfg_ds = defs.cfg['dataset']
+    h, w = cfg_ds['h'], cfg_ds['w']
+    return transforms.Compose([FillNaNsFFS(),
+                               GeoposeToTensor(),
                                ResizeToImgShape(),
                                PadToResolution(h, w),
-                               CenterAndCrop(h, w)])
+                               CenterAndCrop(h, w),
+                               NormalizeImg(),
+                               NormMinMaxDepth()])
+
+
+class FillNaNsFFS:
+    def __call__(self, sample):
+        depth = sample['depth']
+        sample['depth'] = np.nan_to_num(depth)
+        return sample
 
 
 if __name__ == '__main__':
@@ -206,10 +256,11 @@ if __name__ == '__main__':
     cfg_ds = defs.cfg['dataset']
     aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
 
-    shitty_transform = transforms.Compose([GeoposeToTensor(),
+    shitty_transform = transforms.Compose([FillNaNsFFS(),
+                                           GeoposeToTensor(),
                                            ResizeToImgShape(),
                                            ResizeToResolution(h, w)])
-    geoset = GeoposeDataset(transform=crop_to_aspect_ratio_and_resize())
+    geoset = GeoposeDataset(transform=pad_and_center())
     dl = DataLoader(geoset, batch_size=4, shuffle=True)
     batch = next(iter(dl))
     # for k, v in s2.items():

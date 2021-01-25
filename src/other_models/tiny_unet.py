@@ -64,11 +64,13 @@ class UNet(nn.Module):
     Used as a toy net to see that it works at all.
     """
 
-    def __init__(self, tiny=True):
+    def __init__(self, tiny=True, sigmoid=True):
         super().__init__()
-        mult = 4
         if tiny:
             mult = 1
+        else:
+            mult = 4
+        self.sigmoid = sigmoid
         self.activation = F.relu
 
         self.pool1 = nn.MaxPool2d(2)
@@ -105,5 +107,7 @@ class UNet(nn.Module):
         up3 = self.up_block32_16(up2, block1)
 
         last = self.last(up3)
-
-        return torch.sigmoid(last.squeeze())
+        if self.sigmoid:
+            return torch.sigmoid(last.squeeze())
+        else:
+            return last.squeeze()

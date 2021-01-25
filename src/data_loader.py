@@ -23,7 +23,7 @@ cfg_aug = defs.cfg['data_augmentation']
 class GeoposeDataset(Dataset):
     """GeoPose3K dataset with (img,depth) pairs."""
 
-    def __init__(self, transform=None):
+    def __init__(self, transform=None, onlydepth=False):
         """
 
         Args:
@@ -35,44 +35,54 @@ class GeoposeDataset(Dataset):
         self.foldernames = np.array(
             [fn for fn in os.listdir(self.dir) if os.path.isdir(join(self.dir, fn)) and not fn.startswith('.')])
         self.foldernames.sort()
+        self.onlydepth = onlydepth
 
     def __len__(self):
         return len(self.foldernames)
 
     def __getitem__(self, idx):
+        """
+        get sample item
+        Args:
+            idx: int or string. if int: will get by idx in foldernames list,
+                                if string: will get sample by folder name supplied in string.
+
+        Returns:
+
+        """
         # batch requests
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        folder = os.path.join(self.dir, self.foldernames[idx])
-        # folder = os.path.join(self.dir, 'flickr_sge_987018572_c163ca22e5_1146_30222664@N00')
-        img_names = []
-        depth_names = []
-        segmap_names = []
-        loader = PFMLoader()
 
-        # for folder in batch_folders:
-        #     print(folder)
+        if type(idx) == str:
+            # assume idx is folder name requested. for visualization purposes mostly.
+            folder = os.path.join(self.dir, idx)
+        else:
+            folder = os.path.join(self.dir, self.foldernames[idx])
+        depth_name = None
+        segmap_name = None
+        img_name = None
+        loader = PFMLoader()
         for file in os.listdir(folder):
             if file == 'distance_crop.pfm':
                 depth_name = os.path.join(folder, file)
-                # depth_names.append(os.path.join(folder, file))
-            if file.endswith(('.png', '.jpg', '.jpeg')):
+            elif file.endswith(('.png', '.jpg', '.jpeg')):
                 if file == 'labels_crop.png':
-                    # segmap_names.append(join(folder, file))
                     segmap_name = join(folder, file)
-                else:
-                    # img_names.append(os.path.join(folder, file))
+                elif file.startswith('photo'):
                     img_name = os.path.join(folder, file)
-        if len(img_names) != len(depth_names) or len(segmap_names) != len(depth_names):
-            raise Exception(f'don\'t have same amount of images/segmaps as depths.\n'
-                            # f' imgs: {len(img_names)}\ndepths: {len(depth_names)}\n'
-                            f'folder: {folder}')
+        if not depth_name or not segmap_name or not img_name:
+            raise Exception(f'folder is missing image/depth/seg: {folder}')
+
+        if self.onlydepth:
+            return {'depth': np.array(loader.load_pfm(depth_name)[::-1])}
         # image = Image.open(img_name)
-        image = io.imread(img_name)
+        image = np.array(io.imread(img_name))
         depth = np.array(loader.load_pfm(depth_name)[::-1])
-        segmap = io.imread(segmap_name)[:, :, :3]  # alpha channel is irrelevant (val is always 1).
+        # segmap = io.imread(segmap_name)[:, :, :3]  # alpha channel is irrelevant (val is always 1).
         # bad - all images are in different resolutions!!!
-        sample = {'image': image, 'segmap': segmap, 'depth': depth, 'name': self.foldernames[idx]}
+        name = idx if type(idx) == str else self.foldernames[idx]
+        sample = {'image': image, 'depth': depth, 'name': name}
 
         if self.transform:
             sample = self.transform(sample)
@@ -80,7 +90,7 @@ class GeoposeDataset(Dataset):
         return sample
 
 
-class GeoposeToTensor():
+class GeoposeToTensor:
     def __call__(self, sample):
         for k, v in sample.items():
             if type(v).__name__ == 'ndarray':
