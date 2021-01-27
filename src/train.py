@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-
+# error: AttributeError: 'numpy.ndarray' object has no attribute 'unsqueeze'
 import torch
 import torch.nn as nn
 from clearml import Task
@@ -15,9 +15,8 @@ import model
 import visualize as viz
 from data_loader import FarsightDataset, GeoposeDataset, FarsightToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
-from prepare_data import crop_to_aspect_ratio_and_resize, pad_and_center
+from prepare_data import crop_to_aspect_ratio_and_resize, pad_and_center, reverseMinMaxScale
 from utils import get_dev, cfg, get_folder_name, set_cfg
-import utils
 
 logger = logging.getLogger(__name__)
 if cfg['misc']['verbose']:
@@ -61,7 +60,14 @@ def train():
     folder_name = get_folder_name()
     # if use_writer:
     writer = SummaryWriter(os.path.join('runs', folder_name))
-    train_loader, val_loader = get_loaders()
+    loaders = get_loaders()
+    train_loader, val_loader = None, None
+    if len(loaders) == 3:
+        train_loader, val_loader, depth_postprocessing = loaders
+    elif len(loaders) == 2:
+        train_loader, val_loader = loaders
+        depth_postprocessing = None
+    assert train_loader is not None and val_loader is not None, "problem with loader."
     n_batches = len(train_loader)
     # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
     cfg_model = cfg['model']
@@ -108,9 +114,21 @@ def train():
                         val_score = None
                         val_sample = None
                 train_loss = running_loss / (print_every * n_batches)
-                train_sample = {**data, 'pred': pred_depth}
+                data['log_gt_depth'] = data['depth']
+                del data['depth']
+                # del data['image']
+                # TODO: see how to save og image for printing w.o doing it for every batch.
+                train_sample = {**data, 'log_pred': pred_depth}
+                if cfg['validation']['hist']:
+                    viz_net = net
+                else:
+                    viz_net = None
+                if depth_postprocessing:
+                    train_sample['log_pred'] = depth_postprocessing(train_sample['log_pred'])
+                    train_sample['log_gt_depth'] = depth_postprocessing(train_sample['log_gt_depth'])
                 print_stats(train_sample, val_sample,
-                            train_loss, val_score, epoch, writer)
+                            train_loss, val_score, epoch,
+                            writer, viz_net)
                 running_loss = 0.0
             if save_every is not None and (epoch % save_every == save_every - 1):
                 save_checkpoint(epoch, net, optimizer, running_loss)
@@ -172,7 +190,8 @@ def eval_net(net, loader, metric):
 
 
 def print_stats(train_sample, val_sample,
-                train_loss, val_score, epoch, writer, net=None):
+                train_loss, val_score, epoch,
+                writer, net=None):
     """
     log statistics and figures of the current log round
     (to be used every 'print_every' in configs)
@@ -209,16 +228,18 @@ def print_stats(train_sample, val_sample,
             tag = tag.replace('.', '/')
             writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
             writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
-        writer.add_histogram('values', train_sample['pred'].detach().cpu().numpy(), epoch)
+        writer.add_histogram('values', train_sample['log_pred'].detach().cpu().numpy(), epoch)
     logger.info('logging images...')
     fig = viz.show_batch(train_sample)
     fig.suptitle(f'train, epoch {epoch}', fontsize='xx-large')
-    plt.show()
+    if cfg['misc']['plt_show']:
+        plt.show()
     writer.add_figure(tag='viz/train', figure=fig, global_step=epoch)
     if val_sample is not None:
         fig = viz.show_batch(val_sample)
         fig.suptitle(f'val, epoch {epoch}', fontsize='xx-large')
-        plt.show()
+        if cfg['misc']['plt_show']:
+            plt.show()
         writer.add_figure(tag='viz/val', figure=fig, global_step=epoch)
 
 
@@ -269,42 +290,22 @@ def get_criterion():
     return criterion
 
 
-def get_loaders():
-    ds_name = cfg['dataset']['name']
-    if ds_name == 'farsight':
-        return get_farsight_loaders()
-    elif ds_name == 'geopose':
-        return get_geopose_loaders()
-
-
-def get_geopose_loaders():
-    # TODO: make both into one simple loader, lots of copied code here.
-    cfg_train = cfg['train']
-    cfg_validation = cfg['validation']
-    batch_size = cfg_train['batch_size']
-    batch_size_val = cfg['validation']['batch_size']
-    val_percent = cfg_validation['val_percent']
-    subset_size = cfg_train['subset_size']
+def get_geopose_split(subset_size, val_percent):
     ds = GeoposeDataset(transform=pad_and_center())
+    imgs = ['eth_ch1_2011-04-30_18_37_52_01024',
+            'eth_ch1_2011-04-30_18_40_20_01024']
     if subset_size is not None:
-        ds = Subset(ds, range(subset_size))
+        ds = Subset(ds, imgs)
+        # ds = Subset(ds, range(subset_size))
     n_val = int(len(ds) * val_percent)
     n_train = len(ds) - n_val
     train_split, val_split = random_split(ds,
                                           [n_train, n_val],
                                           generator=torch.Generator().manual_seed(42))
-    train_loader = DataLoader(train_split,
-                              shuffle=False,
-                              batch_size=batch_size,
-                              num_workers=0)
-    val_loader = DataLoader(val_split,
-                            shuffle=False,
-                            batch_size=batch_size_val,
-                            num_workers=0)
-    return train_loader, val_loader
+    return train_split, val_split
 
 
-def get_farsight_loaders():
+def get_loaders():
     """
     get data loaders for train set and val set
 
@@ -315,8 +316,30 @@ def get_farsight_loaders():
     cfg_validation = cfg['validation']
     batch_size = cfg_train['batch_size']
     batch_size_val = cfg['validation']['batch_size']
-    val_percent = cfg_validation['val_percent']
+    ds_name = cfg['dataset']['name']
     subset_size = cfg_train['subset_size']
+    val_percent = cfg_validation['val_percent']
+    if not val_percent:
+        val_percent = 0
+    if ds_name == 'farsight':
+        train_split, val_split = get_farsight_split(cfg_train, subset_size, val_percent)
+    elif ds_name == 'geopose':
+        train_split, val_split = get_geopose_split(subset_size, val_percent)
+    train_loader = DataLoader(train_split,
+                              shuffle=False,
+                              batch_size=batch_size,
+                              num_workers=0)
+    val_loader = DataLoader(val_split,
+                            shuffle=False,
+                            batch_size=batch_size_val,
+                            num_workers=0)
+    if ds_name == 'farsight':
+        return train_loader, val_loader
+    elif ds_name == 'geopose':
+        return train_loader, val_loader, reverseMinMaxScale
+
+
+def get_farsight_split(cfg_train, subset_size, val_percent):
     if cfg_train['use_folds']:
         train_split, val_split = get_farsight_fold_dataset(1)
         if subset_size is not None:
@@ -336,15 +359,7 @@ def get_farsight_loaders():
                                               generator=torch.Generator().manual_seed(42))
     # TODO: check rnd. gen is consistent.
     # TODO: make optional to use manual seed or random at some point. (same for DL?)
-    train_loader = DataLoader(train_split,
-                              shuffle=False,
-                              batch_size=batch_size,
-                              num_workers=0)
-    val_loader = DataLoader(val_split,
-                            shuffle=False,
-                            batch_size=batch_size_val,
-                            num_workers=0)
-    return train_loader, val_loader
+    return train_split, val_split
 
 
 def save_checkpoint(epoch, net, optimizer, running_loss):
@@ -408,6 +423,38 @@ def load_checkpoint():
     return net, optim, epoch, loss
 
 
+def coarse_to_fine_train():
+    lrs = [1e-4, 1e-2]
+    ids = ['4f8b87a1e1684be9a8e34ede211d3233',
+           '3e252824dbf0485ca4d16ce6e5daad88']
+    for i, lr in enumerate(lrs):
+        taskid = ids[i]
+        cfg['optim']['lr'] = lr
+        cfg['checkpoint']['run_name'] = f'optim_lr_{lr}'
+        if cfg['misc']['use_trains']:
+            clearml_logger, task = use_clearml(taskid)
+        train()
+        if cfg['misc']['use_trains']:
+            task.close()
+
+
+def use_clearml(taskid=None):
+    if cfg['checkpoint']['use_saved']:
+        cfg['checkpoint']['saved_path'] = cfg['checkpoint']['run_name']
+        task = Task.init(continue_last_task=True,
+                         reuse_last_task_id=taskid)
+        task.set_initial_iteration(0)
+        # task = Task.get_task(task_id='4f8b87a1e1684be9a8e34ede211d3233')
+        # project_name='ariel-mde', task_name=get_folder_name())
+    else:
+        task = Task.init(project_name='ariel-mde', task_name=get_folder_name())
+        config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
+        task_cfg = task.connect(cfg)  # enabling configuration override by clearml
+        set_cfg(task_cfg)
+    clearml_logger = task.get_logger()
+    return clearml_logger, task
+
+
 if __name__ == '__main__':
     """
     lr
@@ -418,30 +465,11 @@ if __name__ == '__main__':
     random_seed
     flip_p
     """
-    lrs = [1e-4, 1e-2]
-    ids = ['4f8b87a1e1684be9a8e34ede211d3233',
-           '3e252824dbf0485ca4d16ce6e5daad88']
-    for i, lr in enumerate(lrs):
-        cfg = utils.cfg
-        cfg['optim']['lr'] = lr
-        cfg['checkpoint']['run_name'] = f'optim_lr_{lr}'
-        if cfg['misc']['use_trains']:
-            if cfg['checkpoint']['use_saved']:
-                cfg['checkpoint']['saved_path'] = cfg['checkpoint']['run_name']
-                task = Task.init(continue_last_task=True,
-                                 reuse_last_task_id=ids[i])
-                task.set_initial_iteration(0)
-                # task = Task.get_task(task_id='4f8b87a1e1684be9a8e34ede211d3233')
-                # project_name='ariel-mde', task_name=get_folder_name())
-            else:
-                task = Task.init(project_name='ariel-mde', task_name=get_folder_name())
-                config_file = task.connect_configuration(Path('configs.yml'), 'experiment_config')
-                cfg = task.connect(cfg)  # enabling configuration override by clearml
-                set_cfg(cfg)
-            clearml_logger = task.get_logger()
-        train()
-        if cfg['misc']['use_trains']:
-            task.close()
+    if cfg['misc']['use_trains']:
+        _, task = use_clearml()
+    train()
+    if cfg['misc']['use_trains']:
+        task.close()
     # UniformParameterRange('config/data_augmentation/horizontal_flip', min_value=0, max_value=1),
     # UniformParameterRange('config/data_augmentation/color_jitter', min_value=0, max_value=1),
     # UniformParameterRange('config/data_augmentation/gaussian_blur', min_value=0, max_value=1),

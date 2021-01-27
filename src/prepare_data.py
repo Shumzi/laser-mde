@@ -187,27 +187,54 @@ class NormalizeDepth:
             depth_mean - 1 / depth_std).to(device=defs.get_dev())
         return sample
 
+
 class NormalizeImg:
     """normalize images and depths based on our crop results."""
 
     # {'image': tensor([0.4168, 0.4701, 0.5008]), 'depth': array([3808.661], dtype=float32)}
     # {'image': tensor([0.1869, 0.1803, 0.1935]), 'depth': array([3033.6562], dtype=float32)}
     def __call__(self, sample):
-        image_mean = torch.Tensor([0.4168, 0.4701, 0.5008])
-        image_std = torch.Tensor([0.1869, 0.1803, 0.1935])
+        image_mean = torch.Tensor(defs.cfg['normalization']['image_mean']).to(defs.get_dev())
+        image_std = torch.Tensor(defs.cfg['normalization']['image_std']).to(defs.get_dev())
+        # sample['original_image'] = sample['image']
         sample['image'] = TF.normalize(sample['image'], image_mean, image_std)
         return sample
 
 
 class NormMinMaxDepth:
+    """
+    minmax scaling, see
+    https://en.wikipedia.org/wiki/Feature_scaling#Rescaling_(min-max_normalization)
+    """
+
     def __call__(self, sample):
-        min = -1
-        max = 254957
+        # epsilon = 1e-10
+        min_val = defs.cfg['normalization']['depth_min']
+        max_val = defs.cfg['normalization']['depth_max']  # found from EDA,
         depth = sample['depth']
-        depth -= 1
-        depth /= max
+        depth -= min_val
+        depth /= max_val - min_val
+        # depth += epsilon  # for ability to plot.
+        assert depth.min() >= 0 and depth.max() <= 1, "depth is out of [0-1] range"
         sample['depth'] = depth
         return sample
+
+
+def reverseMinMaxScale(img):
+    """
+    reverses the minmax scaling done to the depth image.
+    Args:
+        img: depth image to be rescaled to original depths
+
+    Returns: rescaled image.
+
+    """
+    min_val = defs.cfg['normalization']['depth_min']
+    max_val = defs.cfg['normalization']['depth_max']  # found from EDA,
+    img *= max_val - min_val
+    img += min_val
+    return img
+
 
 
 def crop_to_aspect_ratio_and_resize():
@@ -219,7 +246,7 @@ def crop_to_aspect_ratio_and_resize():
                                ResizeToResolution(h, w),
                                NormalizeImg(),
                                NormMinMaxDepth()])
-                               # ExtractSkyMask()])
+    # ExtractSkyMask()])
 
 
 def pad_and_center():

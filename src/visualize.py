@@ -9,6 +9,8 @@ from torchvision.transforms import functional as TF
 from matplotlib import cm
 import matplotlib.colors as colors
 
+from prepare_data import reverseMinMaxScale
+
 
 class Unravel:
     def __init__(self, tuple_size, batch_size):
@@ -34,6 +36,7 @@ def show_batch(batch):
     """
     plot a batch of samples. can be images + depth + pred, or whatever.
     Args:
+        postprocessing: postprocessing on
         batch: dict of batch, each key being a different type of image.
                 If dict contains 'name' key, it'll be used as the filenames for each img tuple.
                 batch should contain AT LEAST 2 objects to be plotted. we're not playing here.
@@ -72,10 +75,11 @@ def show_batch(batch):
             ax[u(j)].set_title('sample #{}'.format(j))
     # display actual image.
     for i, image_type in enumerate(image_types):
-        if image_type_names[i] == 'depth':
-            norm = colors.LogNorm()
-        else:
-            norm = None
+        # TODO: lognorm for plotting.
+        # if 'log' in image_type_names[i]:
+        #     norm = colors.LogNorm()
+        # else:
+        #     norm = None
         if torch.is_tensor(image_type):
             image_type = image_type.detach().cpu().numpy()
             if image_type.shape[1] == 3:
@@ -84,10 +88,12 @@ def show_batch(batch):
             elif len(image_type.shape) == 4 and image_type.shape[1] == 1:
                 # Grayscale image that wasn't yet squeezed.
                 image_type = image_type.squeeze(1)
-            elif len(image_type.shape) == 2:
-                image_type = image_type.unsqueeze(0)
+        if len(image_type.shape) == 2:
+            image_type = np.expand_dims(image_type, 0)
         for j, img in enumerate(image_type):
-            ax[u(i * batch_size + j)].imshow(img, norm=norm)
+            im = ax[u(i * batch_size + j)].imshow(img)
+            if len(img.shape) == 2:  # grayscale
+                fig.colorbar(im, ax=ax[u(i * batch_size + j)])
     return fig
 
 
@@ -127,9 +133,11 @@ def get_sub_batch(batch, subsize):
 
     """
     minibatch = {}
-    for k,v in batch.items():
+    for k, v in batch.items():
         minibatch[k] = v[:subsize]
     return minibatch
+
+
 def tensor_imshow(img):
     """
     plots tensor img on plt. doesn't plt.show it though.

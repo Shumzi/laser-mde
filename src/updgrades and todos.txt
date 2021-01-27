@@ -34,3 +34,4 @@ future work:
     test time augs as majority vote
     save best
     stress test to check how robust model is (future work).
+    fix rotated images.

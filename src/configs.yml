@@ -15,14 +15,15 @@ misc:
   verbose: True
   random_seed: 42 # if none won't have constant seed.
   use_cuda: True
-  use_trains: False
+  use_trains: True
+  plt_show: False
 
 checkpoint:
   # if you load a checkpoint, run_name is ignored.
   # if save_every is empty, it won't save.
   use_saved: False # will continue in trains showing old config file.
   saved_path:
-  run_name:
+  run_name: geo2
   save_every:
 
 model:
@@ -31,8 +32,8 @@ model:
   weight_init: True
   name: UNet
   use_bn: True
-  use_double_bn: True
-  dropout: 0.2
+  use_double_bn: False
+  dropout:
 
 optim:
   loss: rmsle
@@ -42,16 +43,16 @@ optim:
   # shuffledata?
 
 train:
-  batch_size: 4
-  epochs: 400
-  subset_size:
+  batch_size: 2
+  epochs: 500
+  subset_size: 4
   use_folds: True
-  print_every: 1
+  print_every: 10
 
 validation:
   batch_size: 10
   val_round: False
-  val_percent: 0.2
+  val_percent:
   shuffle_val: True
   hist: False
 
@@ -62,3 +63,9 @@ data_augmentation:
   gaussian_blur: False
   gaussian_noise: False
   # possibly add std and probability for augs over here?
+
+normalization:
+  depth_min: -1
+  depth_max: 254957
+  image_mean: [0.4168, 0.4701, 0.5008]
+  image_std: [0.1869, 0.1803, 0.1935]
