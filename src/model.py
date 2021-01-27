@@ -8,6 +8,7 @@ import visualize as viz
 from torch.utils.tensorboard import SummaryWriter
 import math
 
+
 class Squeeze(nn.Module):
     def forward(self, x):
         return torch.squeeze(x)
@@ -31,7 +32,12 @@ def toyNet():
         Squeeze()
     )
 
+class EigenCoarse(nn.Module):
+    """
+    based on eigen et al. 2014 https://arxiv.org/pdf/1406.2283.pdf
+    coarse net to give rough shape of depth,
 
+    """
 class WeightValues(nn.Module):
     """
     helper class to see mean and std at some layer.
@@ -46,43 +52,12 @@ class WeightValues(nn.Module):
         return x
 
 
-def eval_net(net, loader, metric):
-    """
-    Validation stage in the training loop.
-
-    Args:
-        net: network being trained
-        loader: data loader of validation data
-        metric: metric to test validation upon.
-    Returns: score of eval based on criterion.
-
-    """
-    net.eval()
-    n_val = len(loader)
-    score = 0
-    val_sample = {}
-    with tqdm(total=n_val, desc='Validation round', unit='batch', leave=False) as pbar:
-        for i, batch in enumerate(loader):
-            imgs, gt_depths = batch['image'], batch['depth']
-            with torch.no_grad():
-                pred_depths = net(imgs)
-            score += metric(pred_depths, gt_depths)
-            if i == n_val - 1:
-                val_sample.update({**batch, 'pred': pred_depths})
-                # fig = viz.show_batch({**batch, 'pred': pred_depths})
-                # writer.add_images('val/pred', pred_depths.unsqueeze(1), step)
-                # writer.add_images('val/gt', gt_depths.unsqueeze(1), step)
-            pbar.update()
-    score /= n_val
-    net.train()
-    return score, val_sample
-
-
 class RMSLELoss(nn.Module):
-    '''
+    """
     root mean square log error.
-    Currently explodes when using small values between 0 and 1.
-    '''
+    taken from: https://discuss.pytorch.org/t/rmsle-loss-function/67281
+    """
+
     def __init__(self):
         super().__init__()
         self.mse = nn.MSELoss()
@@ -93,9 +68,10 @@ class RMSLELoss(nn.Module):
 
 
 class EigenDepthLoss(nn.Module):
-    '''
+    """
     eigen depth which promotes structural consistency.
-    '''
+    """
+
     def __init__(self):
         super().__init__()
         self.mse = nn.MSELoss()

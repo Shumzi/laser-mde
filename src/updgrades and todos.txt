@@ -7,14 +7,8 @@ easy hyperparam opt.
 itamar:
 metrics
 training process, false analysis with nb.
-augementation - add tashtit. flip, brightness, color variation,
-crop scale.
-save models.
 
 tomorrow:
-load models.
-train again
-augmentations infrustructure -
 nb for analysis
 add gradient metric.
 
@@ -23,3 +17,21 @@ go over runs, delete what isn't interesting, connect between run and model train
 make the configs file less shit.
 foldername AND run_name? what's wrong with you..
 should eval_net be in train?
+
+nitzan 31.12.20
+next steps:
+    configs make more sense.
+    try to reduce overfit - optuna?
+    clean up
+    try to make a test? on hills
+    inference mode
+Overfitting
+    clean images (take out shit)
+    dropout
+    lr plateau
+    augs move a bit
+future work:
+    test time augs as majority vote
+    save best
+    stress test to check how robust model is (future work).
+    fix rotated images.

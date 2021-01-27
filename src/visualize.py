@@ -2,15 +2,44 @@ from matplotlib import pyplot as plt
 from matplotlib import image
 import torch
 from mpl_toolkits.axes_grid1 import ImageGrid
+import numpy as np
+from PIL import Image
+import data_loader
+from torchvision.transforms import functional as TF
+from matplotlib import cm
+import matplotlib.colors as colors
+
+from prepare_data import reverseMinMaxScale
+
+
+class Unravel:
+    def __init__(self, tuple_size, batch_size):
+        """
+        helper class for unraveling indexes of plots.
+        created for edge case of an axes being 1d.
+        Args:
+            tuple_size: int, no. of images per tuples that will be displayed
+            batch_size: int, no. of image tuples in batch.
+        """
+        self.tuple_size = tuple_size
+        self.batch_size = batch_size
+
+    def __call__(self, idx):
+        if self.tuple_size == 1 or self.batch_size == 1:
+            pos = idx
+        else:
+            pos = np.unravel_index(idx, (self.tuple_size, self.batch_size))
+        return pos
 
 
 def show_batch(batch):
     """
     plot a batch of samples. can be images + depth + pred, or whatever.
-    input:
     Args:
+        postprocessing: postprocessing on
         batch: dict of batch, each key being a different type of image.
                 If dict contains 'name' key, it'll be used as the filenames for each img tuple.
+                batch should contain AT LEAST 2 objects to be plotted. we're not playing here.
 
     Returns: fig of plot.
 
@@ -25,29 +54,118 @@ def show_batch(batch):
         filenames = batch.pop('name')
     except:
         filenames = None
-    types, images_batches = list(batch.keys()), list(batch.values())  # images_batches: list(batches)
-    batch_size = len(images_batches[0])
-    type_size = len(images_batches)  # amount of types of images we'll be displaying.
-    fig, ax = plt.subplots(type_size, batch_size, figsize=(batch_size * 4, type_size * 4))
+    image_type_names, image_types = list(batch.keys()), list(batch.values())  # image_type_names: image, depth, etc.
+    # for image_type in image_types:
+    #     if len(image_type.shape) == 2 or (len(image_type.shape) == 3 and
+    batch_size = image_types[0].shape[0]
+    tuple_size = len(image_types)  # amount of images in per sample we'll be displaying.
+    u = Unravel(tuple_size, batch_size)
+    fig, ax = plt.subplots(tuple_size, batch_size, figsize=(batch_size * 4 + 2, tuple_size * 4))
     # image type
-    for i, type_name in enumerate(types):
-        ax[i, 0].set_ylabel(type_name, fontsize='x-large')
+    for i, type_name in enumerate(image_type_names):
+        ax[u(i * batch_size)].set_ylabel(type_name, fontsize='x-large')
     # sample number
     if filenames is not None:
         for j, fn in enumerate(filenames):
-            ax[0, j].set_title('sample #{}\n{}'.format(j, fn))
+            ax[u(j)].set_title('sample #{}\n{}'.format(j, fn))
         # push back into dict.
         batch['name'] = filenames
     else:
         for j in range(batch_size):
-            ax[0, j].set_title('sample #{}'.format(j))
+            ax[u(j)].set_title('sample #{}'.format(j))
     # display actual image.
-    for i, img_batch in enumerate(images_batches):
-        if torch.is_tensor(img_batch):
-            img_batch = img_batch.detach().cpu().numpy()
-            if img_batch.shape[1] == 3:
+    for i, image_type in enumerate(image_types):
+        # TODO: lognorm for plotting.
+        # if 'log' in image_type_names[i]:
+        #     norm = colors.LogNorm()
+        # else:
+        #     norm = None
+        if torch.is_tensor(image_type):
+            image_type = image_type.detach().cpu().numpy()
+            if image_type.shape[1] == 3:
                 # reshape back from C X H X W into H X W X C.
-                img_batch = img_batch.transpose(0, 2, 3, 1)
-        for j, img in enumerate(img_batch):
-            ax[i, j].imshow(img)
+                image_type = image_type.transpose(0, 2, 3, 1)
+            elif len(image_type.shape) == 4 and image_type.shape[1] == 1:
+                # Grayscale image that wasn't yet squeezed.
+                image_type = image_type.squeeze(1)
+        if len(image_type.shape) == 2:
+            image_type = np.expand_dims(image_type, 0)
+        for j, img in enumerate(image_type):
+            im = ax[u(i * batch_size + j)].imshow(img)
+            if len(img.shape) == 2:  # grayscale
+                fig.colorbar(im, ax=ax[u(i * batch_size + j)])
     return fig
+
+
+def show_sample(sample):
+    for k, v in sample.items():
+        if k == 'name':
+            sample[k] = [v]
+        else:
+            sample[k] = v[np.newaxis]
+    return show_batch(sample)
+
+
+def blend_images(im1, im2):
+    # im = Image.fromarray(np.uint8(cm.(im1) * 255))
+    if type(im1) == np.ndarray:
+        im1 = Image.fromarray(im1)
+    elif torch.is_tensor(im1):
+        im1 = TF.to_pil_image(im1)
+    if type(im2) == np.ndarray:
+        im2 = Image.fromarray(im2)
+    elif torch.is_tensor(im2):
+        im2 = TF.to_pil_image(im2)
+    im1 = im1.convert("RGBA")
+    im2 = im2.convert("RGBA")
+    blended = Image.blend(im1, im2, alpha=.25)
+    return blended
+
+
+def get_sub_batch(batch, subsize):
+    """
+    return first subsize samples in batch.
+    Args:
+        batch: batch of samples.
+        subsize:
+
+    Returns: sub-batch.
+
+    """
+    minibatch = {}
+    for k, v in batch.items():
+        minibatch[k] = v[:subsize]
+    return minibatch
+
+
+def tensor_imshow(img):
+    """
+    plots tensor img on plt. doesn't plt.show it though.
+    Args:
+        img: Tensor of shape (CxHxW)
+
+    Returns: fig of image.
+
+    """
+    return plt.imshow(img.cpu().numpy().transpose((1, 2, 0)))
+
+
+def show_geopose_sample_with_blend(sample):
+    """
+    util for showing a specific sample in geopose dataset with blend.
+    for debugging purposes.
+    Returns: fig of plotted image.
+
+    """
+    sample['blend'] = blend_images(sample['image'], sample['depth'])
+    return show_sample(sample)
+
+
+if __name__ == '__main__':
+    pass
+    # torch.manual_seed(42)
+    # n_samples = 1
+    # x = torch.randn(n_samples * 100).view(n_samples, 10, 10)
+    # y = torch.randn(n_samples * 100).view(n_samples, 10, 10)
+    # show_batch({'x': x, 'y': y})
+    # plt.show()

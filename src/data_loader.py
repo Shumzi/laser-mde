@@ -1,31 +1,116 @@
-from __future__ import print_function, division
-import logging
-import sys
-
-from utils import get_depth_dir, get_img_dir
-import utils as defs
-import visualize as viz
-import random
 import os
-import torch
-from skimage import io
-import numpy as np
-import matplotlib.pyplot as plt
-from torch.utils.data import Dataset, DataLoader, Subset
-from torchvision import transforms, utils
-from torchvision.transforms import functional as TF
-import pandas as pd
+from os.path import join
+import random
 from random import shuffle
 
-cfg_aug = defs.cfg['train']['data_augmentation']
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+from pypfm import PFMLoader
+from skimage import io
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from torchvision.transforms import functional as TF
+from PIL import Image, ImageOps
+import utils as defs
+import visualize as viz
+from utils import get_depth_dir, get_img_dir, get_test_dir
+
+cfg_aug = defs.cfg['data_augmentation']
+
+
+class GeoposeDataset(Dataset):
+    """GeoPose3K dataset with (img,depth) pairs."""
+
+    def __init__(self, transform=None, onlydepth=False):
+        """
+
+        Args:
+            transform (callable, optional): Optional transform to be applied
+                  on a sample.
+        """
+        self.dir = defs.cfg['dataset']['geopose_path']
+        self.transform = transform
+        self.foldernames = np.array(
+            [fn for fn in os.listdir(self.dir) if os.path.isdir(join(self.dir, fn)) and not fn.startswith('.')])
+        self.foldernames.sort()
+        self.onlydepth = onlydepth
+
+    def __len__(self):
+        return len(self.foldernames)
+
+    def __getitem__(self, idx):
+        """
+        get sample item
+        Args:
+            idx: int or string. if int: will get by idx in foldernames list,
+                                if string: will get sample by folder name supplied in string.
+
+        Returns:
+
+        """
+        # batch requests
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        if type(idx) == str:
+            # assume idx is folder name requested. for visualization purposes mostly.
+            folder = os.path.join(self.dir, idx)
+        else:
+            folder = os.path.join(self.dir, self.foldernames[idx])
+        depth_name = None
+        segmap_name = None
+        img_name = None
+        loader = PFMLoader()
+        for file in os.listdir(folder):
+            if file == 'distance_crop.pfm':
+                depth_name = os.path.join(folder, file)
+            elif file.endswith(('.png', '.jpg', '.jpeg')):
+                if file == 'labels_crop.png':
+                    segmap_name = join(folder, file)
+                elif file.startswith('photo'):
+                    img_name = os.path.join(folder, file)
+        if not depth_name or not segmap_name or not img_name:
+            raise Exception(f'folder is missing image/depth/seg: {folder}')
+
+        if self.onlydepth:
+            return {'depth': np.array(loader.load_pfm(depth_name)[::-1])}
+        # image = Image.open(img_name)
+        image = np.array(io.imread(img_name))
+        depth = np.array(loader.load_pfm(depth_name)[::-1])
+        # segmap = io.imread(segmap_name)[:, :, :3]  # alpha channel is irrelevant (val is always 1).
+        # bad - all images are in different resolutions!!!
+        name = idx if type(idx) == str else self.foldernames[idx]
+        sample = {'image': image, 'depth': depth, 'name': name}
+
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
+
+
+class GeoposeToTensor:
+    def __call__(self, sample):
+        for k, v in sample.items():
+            if type(v) == np.ndarray:
+                sample[k] = TF.to_tensor(v).to(device=defs.get_dev())
+        return sample
+
+
 class FarsightDataset(Dataset):
     """Farsight dataset with (img,depth) pairs."""
 
     def __init__(self, transform=None, filenames=None):
         """
+
         Args:
             transform (callable, optional): Optional transform to be applied
                   on a sample.
+            filenames: (list of strings, optional):
+                filenames in folders to use for dataset, instead of all files (default).
+                Example usage would be when making two datasets (train and test),
+                having to specify which files go where, since split must be by city.
         """
         self.img_dir = get_img_dir()
         self.depth_dir = get_depth_dir()
@@ -57,7 +142,26 @@ class FarsightDataset(Dataset):
         return sample
 
 
-class ToTensor(object):
+class FarsightTestDataset(Dataset):
+    def __init__(self, transform=None):
+        self.transform = transform
+        self.test_dir = get_test_dir()
+        self.filenames = np.array([fn for fn in os.listdir(self.test_dir) if fn.lower().endswith('.png')])
+
+    def __len__(self):
+        return len(self.filenames)
+
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.test_dir,
+                                self.filenames[idx])
+        image = io.imread(img_name)
+        if self.transform is not None:
+            image = self.transform(image)
+
+        return {'image': image, 'name': self.filenames[idx].strip('.png')}
+
+
+class FarsightToTensor(object):
     """Convert ndarrays in sample to Tensors
     and moves them into the correct range for conv operations."""
 
@@ -71,14 +175,14 @@ class ToTensor(object):
         # so change to float32 & range [0..1] instead of [0..255].
         # transpose conv works bad with 513x513 images, so take only 512x512 from farsight imgs.
         image = (image.transpose((2, 0, 1)).astype(np.float32) / 256)[:, :-1, :-1]
-        # same problem with depth. depth is in bins of 4m, max 250 (1000m). Moving to [0..1] 
+        # image = image*2-1
+        # same problem with depth. depth is in bins of 4m, max 250 (1000m). Moving to [0..1]
         depth = (depth.astype(np.float32) / 250)[:-1, :-1]
         # depth is just H X W, so no problem here.
         image_tensor = torch.from_numpy(image).to(device=dev)
         depth_tensor = torch.from_numpy(depth).to(device=dev)
-        return {'image': image_tensor,
-                'depth': depth_tensor,
-                'name': sample['name']}
+        sample['image'], sample['depth'] = image_tensor, depth_tensor
+        return sample
 
 
 class RandomHorizontalFlip:
@@ -152,7 +256,7 @@ def get_farsight_fold_dataset(fold, transform=None):
     """
     if transform is None:
         transform = transforms.Compose([
-            ToTensor(),
+            FarsightToTensor(),
             RandomHorizontalFlip(),
             RandomColorJitter(),
             RandomGaussianBlur(),
@@ -171,10 +275,11 @@ def get_farsight_fold_dataset(fold, transform=None):
         else:
             train_idxs += list(g['filename'].values)
     shuffle(train_idxs)
-    if defs.cfg['train']['shuffle_val']:
+    # TODO: make this not so shady as it is now. Maybe it's ok?
+    if defs.cfg['validation']['shuffle_val']:
         shuffle(val_idxs)
     train_ds = FarsightDataset(transform, train_idxs)
-    val_ds = FarsightDataset(ToTensor(), val_idxs)
+    val_ds = FarsightDataset(FarsightToTensor(), val_idxs)
     return train_ds, val_ds
 
 
@@ -183,7 +288,7 @@ if __name__ == '__main__':
     basic test to see that the dataloader works ok.
     """
     tforms = transforms.Compose([
-        ToTensor(),
+        FarsightToTensor(),
         RandomHorizontalFlip(),
         RandomColorJitter(),
         RandomGaussianBlur(),
@@ -201,21 +306,3 @@ if __name__ == '__main__':
         # viz.show_batch(v_sample)
         # plt.suptitle(f'val_{i}_{len(v_loader)}')
         # plt.show()
-
-    # dataloader = DataLoader(FarsightDataset(transform=ToTensor()),
-    #                         batch_size=4, shuffle=True, num_workers=0)
-    #
-    # for i_batch, sample_batched in enumerate(dataloader):
-    #     print('batch #{}, img size: {}, depth size: {}'.format(i_batch,
-    #                                                            sample_batched['image'].size(),
-    #                                                            sample_batched['depth'].size()))
-    #
-    #     # observe 4th batch and stop.
-    #     if i_batch == 3:
-    #         fig = plt.figure()
-    #         viz.show_batch({**sample_batched,
-    #                         'disp': sample_batched['depth'] - sample_batched['depth']})
-    #         plt.title('hi')
-    #         # plt.axis('off')
-    #         plt.show()
-    #         break

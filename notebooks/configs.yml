@@ -1,0 +1,64 @@
+# possibly move to Hydra (FB) if things get complex.
+
+
+dataset:
+  name: geopose
+  data_dir: ../data/farsight
+  depth_foldername: depth_without_bad_images
+  img_foldername: img_without_bad_images
+  test_foldername: test
+  geopose_path: '../data/geoPose3K'
+  aspect_ratio: 1
+  h: 512
+  w: 512
+misc:
+  verbose: True
+  random_seed: 42 # if none won't have constant seed.
+  use_cuda: False
+  use_trains: False
+
+checkpoint:
+  # if you load a checkpoint, run_name is ignored.
+  # if save_every is empty, it won't save.
+  use_saved: False # will continue in trains showing old config file.
+  saved_path:
+  run_name:
+  save_every:
+
+model:
+  # is irrelevant if you're loading a saved model.
+  # arch is prebuilt into the .pt file. easier to handle it.
+  weight_init: True
+  name: UNet
+  use_bn: True
+  use_double_bn: True
+  dropout: 0.2
+
+optim:
+  loss: rmsle
+  lr: 1.e-2
+  use_lr_scheduler: False
+  # randomdata?
+  # shuffledata?
+
+train:
+  batch_size: 50
+  epochs: 400
+  subset_size:
+  use_folds: True
+  print_every: 1
+
+validation:
+  batch_size: 10
+  val_round: False
+  val_percent: 0.2
+  shuffle_val: True
+  hist: False
+
+data_augmentation:
+  flip_p: 0.5
+  horizontal_flip: False
+  color_jitter: False
+  gaussian_blur: False
+  gaussian_noise: False
+  # possibly add std and probability for augs over here?
