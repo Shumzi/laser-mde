@@ -77,6 +77,15 @@ class CropToAspectRatio:
         return sample
 
 
+def maybe_add_mask(sample):
+    if defs.cfg['dataset']['use_mask']:
+        assert 'mask' in sample, 'use_mask set to True but no mask provided in sample.'
+        mask = sample['mask']
+        sample['image'] = torch.cat((sample['image'], mask), dim=0)
+    return sample
+
+
+
 class ResizeToResolution:
     """
     resize all images in sample to be set resolution.
