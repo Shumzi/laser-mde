@@ -64,7 +64,7 @@ class UNet(nn.Module):
     Used as a toy net to see that it works at all.
     """
 
-    def __init__(self, tiny=True, sigmoid=True):
+    def __init__(self, in_channel=3, tiny=True, sigmoid=True):
         super().__init__()
         if tiny:
             mult = 1
@@ -77,7 +77,7 @@ class UNet(nn.Module):
         self.pool2 = nn.MaxPool2d(2)
         self.pool3 = nn.MaxPool2d(2)
 
-        self.conv_block3_16 = UNetConvBlock(3, 16 * mult)
+        self.conv_block3_16 = UNetConvBlock(in_channel, 16 * mult)
         self.conv_block16_32 = UNetConvBlock(16 * mult, 32 * mult)
         self.conv_block32_64 = UNetConvBlock(32 * mult, 64 * mult)
         self.conv_block64_128 = UNetConvBlock(64 * mult, 128 * mult)

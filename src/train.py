@@ -16,7 +16,9 @@ import visualize as viz
 from data_loader import FarsightDataset, GeoposeDataset, FarsightToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
 from prepare_data import crop_to_aspect_ratio_and_resize, pad_and_center, reverseMinMaxScale
+import prepare_data
 from utils import get_dev, cfg, get_folder_name, set_cfg
+from torchvision.transforms import Compose
 
 logger = logging.getLogger(__name__)
 if cfg['misc']['verbose']:
@@ -91,6 +93,11 @@ def train():
             for data in train_loader:
                 # get the inputs; data is a list of [input images, depth maps]
                 img, gt_depth = data['image'], data['depth']
+                if cfg['dataset']['use_mask'] and 'mask' in data:
+                    mask = data['mask']
+                    img = torch.cat((img, mask), dim=1)
+                else:
+                    mask = None
                 loss, pred_depth = step(criterion, img, gt_depth, net, optimizer)
                 loss_value = loss.item()
                 assert loss_value == loss_value, 'loss is nan! tf?'
@@ -148,9 +155,13 @@ def step(criterion, img, gt_depth, net, optimizer, mask=None):
     """
     optimizer.zero_grad()
     pred_depth = net(img)
-    if mask:
-        pred_depth.register_hook(lambda grad: grad * mask)
-        # TODO: maybe just do criterion on pred and gt * mask?
+    # pred_depth.retain_grad()
+    # if mask is not None:
+    #     loss = criterion(pred_depth[mask.squeeze(1)], gt_depth.squeeze()[mask.squeeze(1)])
+    #     # pred_depth *= mask.squeeze(1)
+    #     # pred_depth.register_hook(lambda grad: grad * mask)
+    #     # TODO: maybe just do criterion on pred and gt * mask?
+    # else:
     loss = criterion(pred_depth, gt_depth.squeeze())
     loss.backward()
     optimizer.step()
@@ -259,7 +270,11 @@ def get_net():
     model_name = cfg_model['name'].lower()
     if model_name == 'unet':
         if cfg['dataset']['name'] == 'geopose':
-            net = UNet(sigmoid=True)
+            if cfg['dataset']['use_mask']:
+                in_channel = 4
+            else:
+                in_channel = 3
+            net = UNet(in_channel=in_channel)
             # TODO: fix if you don't do minmax scaling in the end.
         else:
             net = UNet()
@@ -291,12 +306,14 @@ def get_criterion():
 
 
 def get_geopose_split(subset_size, val_percent):
-    ds = GeoposeDataset(transform=pad_and_center())
-    imgs = ['eth_ch1_2011-04-30_18_37_52_01024',
-            'eth_ch1_2011-04-30_18_40_20_01024']
+    ds = GeoposeDataset(transform=Compose([prepare_data.ExtractSkyMask(), pad_and_center()]))
+    # ds = GeoposeDataset(transform=pad_and_center())
+    # logger.warning('using hardcoded images, change when using non toy data!!')
+    # imgs = ['eth_ch1_2011-04-30_18_37_52_01024',
+    #         'eth_ch1_2011-04-30_18_40_20_01024']
     if subset_size is not None:
-        ds = Subset(ds, imgs)
-        # ds = Subset(ds, range(subset_size))
+        # ds = Subset(ds, imgs)
+        ds = Subset(ds, range(subset_size))
     n_val = int(len(ds) * val_percent)
     n_train = len(ds) - n_val
     train_split, val_split = random_split(ds,
