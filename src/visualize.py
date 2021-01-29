@@ -1,15 +1,8 @@
-from matplotlib import pyplot as plt
-from matplotlib import image
-import torch
-from mpl_toolkits.axes_grid1 import ImageGrid
 import numpy as np
+import torch
 from PIL import Image
-import data_loader
+from matplotlib import pyplot as plt
 from torchvision.transforms import functional as TF
-from matplotlib import cm
-import matplotlib.colors as colors
-
-from prepare_data import reverseMinMaxScale
 
 
 class Unravel:
@@ -35,6 +28,7 @@ class Unravel:
 def show_batch(batch):
     """
     plot a batch of samples. can be images + depth + pred, or whatever.
+    To be used when taking a batch from Dataloader.
     Args:
         postprocessing: postprocessing on
         batch: dict of batch, each key being a different type of image.
@@ -82,6 +76,8 @@ def show_batch(batch):
         #     norm = None
         if torch.is_tensor(image_type):
             image_type = image_type.detach().cpu().numpy()
+            if image_type.shape[1] == 4:  # remove alpha/mask
+                image_type = image_type[:, :3]
             if image_type.shape[1] == 3:
                 # reshape back from C X H X W into H X W X C.
                 image_type = image_type.transpose(0, 2, 3, 1)
@@ -98,6 +94,15 @@ def show_batch(batch):
 
 
 def show_sample(sample):
+    """
+    Same as show_batch, only for a single sample.
+    To be used when taking a sample from Dataset.
+    Args:
+        sample: single sample
+
+    Returns:
+
+    """
     for k, v in sample.items():
         if k == 'name':
             sample[k] = [v]

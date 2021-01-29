@@ -160,7 +160,7 @@ class FarsightTestDataset(Dataset):
 
         return {'image': image, 'name': self.filenames[idx].strip('.png')}
 
-
+# TODO: move all augmentations to prepare_data.
 class FarsightToTensor(object):
     """Convert ndarrays in sample to Tensors
     and moves them into the correct range for conv operations."""

@@ -1,29 +1,15 @@
-import os
-from os.path import join
-import random
-from random import shuffle
-
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import torch
-from pypfm import PFMLoader
-from skimage import io
+from PIL import Image
+from matplotlib import pyplot as plt
+from skimage.transform import resize
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.transforms import functional as TF
-from PIL import ImageOps
 
 import utils as defs
 import visualize as viz
-from utils import get_depth_dir, get_img_dir, get_test_dir
-from PIL import Image
-import os
-from os.path import join
-from matplotlib import pyplot as plt
 from data_loader import GeoposeDataset, GeoposeToTensor
-from skimage.transform import resize
-import cv2
 
 
 class ResizeToImgShape:
@@ -89,6 +75,15 @@ class CropToAspectRatio:
                     assert int(h * self.aspect_ratio) == w, 'aspect ratio still not checking out.'
                     sample[k] = img
         return sample
+
+
+def maybe_add_mask(sample):
+    if defs.cfg['dataset']['use_mask']:
+        assert 'mask' in sample, 'use_mask set to True but no mask provided in sample.'
+        mask = sample['mask']
+        sample['image'] = torch.cat((sample['image'], mask), dim=0)
+    return sample
+
 
 
 class ResizeToResolution:
@@ -167,9 +162,25 @@ class CenterAndCrop:
 
 class ExtractSkyMask:
     def __call__(self, sample):
+        """
+        IMPORTANT: mask extraction must be done BEFORE normalization!
+
+        Objective: mask out the sky (as it just confuses the model).
+        In any case, we don't care about it.
+
+        Args:
+            sample: Geopose dataset sample, possibly already containing a 'mask'.
+
+        Returns: sample with sky mask added in 'mask' key
+                (added to existing mask, if exists).
+        """
         depth = sample['depth']
-        skymask = depth == -1
-        sample['skymask'] = skymask
+        sky_mask = (depth != -1)
+        if 'mask' in sample:
+            current_mask = sample['mask']
+            sample['mask'] = current_mask | sky_mask
+        else:
+            sample['mask'] = sky_mask
         return sample
 
 
@@ -236,7 +247,6 @@ def reverseMinMaxScale(img):
     return img
 
 
-
 def crop_to_aspect_ratio_and_resize():
     cfg_ds = defs.cfg['dataset']
     aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
@@ -287,7 +297,8 @@ if __name__ == '__main__':
                                            GeoposeToTensor(),
                                            ResizeToImgShape(),
                                            ResizeToResolution(h, w)])
-    geoset = GeoposeDataset(transform=pad_and_center())
+    geoset = GeoposeDataset(transform=transforms.Compose([ExtractSkyMask(),
+                                                          pad_and_center()]))
     dl = DataLoader(geoset, batch_size=4, shuffle=True)
     batch = next(iter(dl))
     # for k, v in s2.items():

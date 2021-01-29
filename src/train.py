@@ -16,7 +16,10 @@ import visualize as viz
 from data_loader import FarsightDataset, GeoposeDataset, FarsightToTensor, get_farsight_fold_dataset
 from other_models.tiny_unet import UNet
 from prepare_data import crop_to_aspect_ratio_and_resize, pad_and_center, reverseMinMaxScale
+import prepare_data
 from utils import get_dev, cfg, get_folder_name, set_cfg
+from torchvision.transforms import Compose
+from model import Sobel
 
 logger = logging.getLogger(__name__)
 if cfg['misc']['verbose']:
@@ -146,15 +149,45 @@ def step(criterion, img, gt_depth, net, optimizer, mask=None):
     Returns: loss: float, predicted depth map: torch.Tensor.
 
     """
+    cos = nn.CosineSimilarity(dim=1, eps=0)
+    get_gradient = Sobel().cuda()
+    ones = torch.ones(gt_depth.size(0), 1, gt_depth.size(2), gt_depth.size(3)).float().cuda()
+    ones = torch.autograd.Variable(ones)
     optimizer.zero_grad()
-    pred_depth = net(img)
-    if mask:
-        pred_depth.register_hook(lambda grad: grad * mask)
-        # TODO: maybe just do criterion on pred and gt * mask?
-    loss = criterion(pred_depth, gt_depth.squeeze())
+    pred = net(img).unsqueeze(1)
+    gt_grad = get_gradient(gt_depth)
+    pred_grad = get_gradient(pred)
+    gt_grad_dx = gt_grad[:, 0, :, :].contiguous().view_as(gt_depth)
+    gt_grad_dy = gt_grad[:, 1, :, :].contiguous().view_as(gt_depth)
+    pred_grad_dx = pred_grad[:, 0, :, :].contiguous().view_as(gt_depth)
+    pred_grad_dy = pred_grad[:, 1, :, :].contiguous().view_as(gt_depth)
+
+    depth_normal = torch.cat((-gt_grad_dx, -gt_grad_dy, ones), 1)
+    output_normal = torch.cat((-pred_grad_dx, -pred_grad_dy, ones), 1)
+
+    # depth_normal = F.normalize(depth_normal, p=2, dim=1)
+    # output_normal = F.normalize(output_normal, p=2, dim=1)
+    # loss = criterion(pred, gt_depth.squeeze())
+    loss_depth = criterion(pred, gt_depth)
+    # loss_depth = torch.log(torch.abs(pred - gt_depth) + 0.5).mean()
+    loss_dx = torch.log(torch.abs(pred_grad_dx - gt_grad_dx) + 1).mean()
+    loss_dy = torch.log(torch.abs(pred_grad_dy - gt_grad_dy) + 1).mean()
+    loss_normal = torch.abs(1 - cos(output_normal, depth_normal)).mean()
+    if cfg['optim']['use_triple']:
+        loss = loss_depth + loss_normal + (loss_dx + loss_dy)
+    else:
+        loss = loss_depth
+    # pred.retain_grad()
+    # if mask is not None:
+    #     loss = criterion(pred[mask.squeeze(1)], gt_depth.squeeze()[mask.squeeze(1)])
+    #     # pred *= mask.squeeze(1)
+    #     # pred.register_hook(lambda grad: grad * mask)
+    #     # TODO: maybe just do criterion on pred and gt * mask?
+    # else:
+    torch.autograd.set_detect_anomaly(True)
     loss.backward()
     optimizer.step()
-    return loss, pred_depth
+    return loss, pred
 
 
 def eval_net(net, loader, metric):
@@ -176,7 +209,7 @@ def eval_net(net, loader, metric):
         for i, batch in enumerate(loader):
             imgs, gt_depths = batch['image'], batch['depth']
             with torch.no_grad():
-                pred_depths = net(imgs)
+                pred_depths = net(imgs).unsqueeze(1)
             score += metric(pred_depths, gt_depths)
             if i == n_val - 1:
                 val_sample.update({**batch, 'pred': pred_depths})
@@ -236,7 +269,7 @@ def print_stats(train_sample, val_sample,
         plt.show()
     writer.add_figure(tag='viz/train', figure=fig, global_step=epoch)
     if val_sample is not None:
-        fig = viz.show_batch(val_sample)
+        fig = viz.show_batch(viz.get_sub_batch(val_sample, cfg['train']['batch_size']))
         fig.suptitle(f'val, epoch {epoch}', fontsize='xx-large')
         if cfg['misc']['plt_show']:
             plt.show()
@@ -259,7 +292,11 @@ def get_net():
     model_name = cfg_model['name'].lower()
     if model_name == 'unet':
         if cfg['dataset']['name'] == 'geopose':
-            net = UNet(sigmoid=True)
+            if cfg['dataset']['use_mask']:
+                in_channel = 4
+            else:
+                in_channel = 3
+            net = UNet(in_channel=in_channel)
             # TODO: fix if you don't do minmax scaling in the end.
         else:
             net = UNet()
@@ -291,12 +328,20 @@ def get_criterion():
 
 
 def get_geopose_split(subset_size, val_percent):
-    ds = GeoposeDataset(transform=pad_and_center())
-    imgs = ['eth_ch1_2011-04-30_18_37_52_01024',
-            'eth_ch1_2011-04-30_18_40_20_01024']
+    if cfg['dataset']['use_mask']:
+        tf = Compose([prepare_data.ExtractSkyMask(),
+                      pad_and_center(),
+                      prepare_data.maybe_add_mask])
+    else:
+        tf = pad_and_center()
+    ds = GeoposeDataset(transform=tf)
+    # ds = GeoposeDataset(transform=pad_and_center())
+    # logger.warning('using hardcoded images, change when using non toy data!!')
+    # imgs = ['eth_ch1_2011-04-30_18_37_52_01024',
+    #         'eth_ch1_2011-04-30_18_40_20_01024']
     if subset_size is not None:
-        ds = Subset(ds, imgs)
-        # ds = Subset(ds, range(subset_size))
+        # ds = Subset(ds, imgs)
+        ds = Subset(ds, range(subset_size))
     n_val = int(len(ds) * val_percent)
     n_train = len(ds) - n_val
     train_split, val_split = random_split(ds,
