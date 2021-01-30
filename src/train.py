@@ -161,13 +161,8 @@ def step(criterion, img, gt_depth, net, optimizer, mask=None):
     gt_grad_dy = gt_grad[:, 1, :, :].contiguous().view_as(gt_depth)
     pred_grad_dx = pred_grad[:, 0, :, :].contiguous().view_as(gt_depth)
     pred_grad_dy = pred_grad[:, 1, :, :].contiguous().view_as(gt_depth)
-
     depth_normal = torch.cat((-gt_grad_dx, -gt_grad_dy, ones), 1)
     output_normal = torch.cat((-pred_grad_dx, -pred_grad_dy, ones), 1)
-
-    # depth_normal = F.normalize(depth_normal, p=2, dim=1)
-    # output_normal = F.normalize(output_normal, p=2, dim=1)
-    # loss = criterion(pred, gt_depth.squeeze())
     loss_depth = criterion(pred, gt_depth)
     # loss_depth = torch.log(torch.abs(pred - gt_depth) + 0.5).mean()
     loss_dx = torch.log(torch.abs(pred_grad_dx - gt_grad_dx) + 1).mean()
@@ -322,8 +317,12 @@ def get_criterion():
         criterion = model.RMSLELoss()
     elif loss_func_name.startswith('mse'):
         criterion = nn.MSELoss()
+    elif loss_func_name == 'triple':
+        pass # TODO: TRIPLE. but do you though? maybe fastdepth..
+    elif loss_func_name == 'grad':
+        pass # TODO: GRAD
     else:
-        raise ValueError("can only use rmsle or mse")
+        raise ValueError("not good criterion.")
     return criterion
 
 

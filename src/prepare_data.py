@@ -10,6 +10,7 @@ from torchvision.transforms import functional as TF
 import utils as defs
 import visualize as viz
 from data_loader import GeoposeDataset, GeoposeToTensor
+from torchvision.models.segmentation import deeplabv3_resnet50
 
 
 class ResizeToImgShape:
@@ -85,7 +86,6 @@ def maybe_add_mask(sample):
     return sample
 
 
-
 class ResizeToResolution:
     """
     resize all images in sample to be set resolution.
@@ -109,6 +109,29 @@ class ResizeToResolution:
                     sample[k] = TF.resize(img, (self.h, self.w),
                                           interpolation=Image.NEAREST)  # don't want -1's and shit to get f'd up.
                     # TODO: assert that values of images didn't change.
+                # viz.tensor_imshow(sample[k])
+        return sample
+
+
+class PadToAspectRatio:
+    def __init__(self, aspect_ratio):
+        self.aspect_ratio = aspect_ratio
+
+    def __call__(self, sample):
+        for k, img in sample.items():
+            if torch.is_tensor(img):
+                sample_h, sample_w = img.shape[1], img.shape[2]
+                sample_aspect_ratio = sample_w / sample_h
+                pad_h, pad_w = 0, 0
+                if sample_aspect_ratio < self.aspect_ratio:
+                    ar_disparity = self.aspect_ratio - sample_aspect_ratio
+                    pad_w = ar_disparity * sample_h
+                elif sample_aspect_ratio > self.aspect_ratio:
+                    ar_disparity = sample_aspect_ratio - self.aspect_ratio
+                    pad_h = ar_disparity * sample_h
+                # pad to get to required resolution,
+                # add 1 extra pad for right and bottom if resolution diff is odd.
+                sample[k] = TF.pad(img, (int(pad_w / 2), int(pad_h / 2), int((pad_w + 1) / 2), int((pad_h + 1) / 2)))
                 # viz.tensor_imshow(sample[k])
         return sample
 
@@ -185,7 +208,14 @@ class ExtractSkyMask:
 
 
 class ExtractSegmentationMask:
-    pass
+    def __init__(self):
+        self.segmodel = deeplabv3_resnet50(pretrained=True)
+        self.segmodel.eval()
+
+    def __call__(self, sample):
+        segmap = self.segmodel(sample['image'])
+        viz.show_sample({**sample, 'segmap': segmap})
+        plt.show()
     # TODO: next week, the whole segmentation git.
 
 
@@ -247,6 +277,14 @@ def reverseMinMaxScale(img):
     return img
 
 
+def pad_to_aspect_ratio_and_resize():
+    cfg_ds = defs.cfg['dataset']
+    aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
+    return transforms.Compose([FillNaNsFFS(),
+                               GeoposeToTensor(),
+                               PadToResolution])
+
+
 def crop_to_aspect_ratio_and_resize():
     cfg_ds = defs.cfg['dataset']
     aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
@@ -293,12 +331,24 @@ if __name__ == '__main__':
     cfg_ds = defs.cfg['dataset']
     aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
 
+
+    def norm(x):
+        x['image'] = TF.normalize(x['image'], mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        return x
+
+
     shitty_transform = transforms.Compose([FillNaNsFFS(),
                                            GeoposeToTensor(),
                                            ResizeToImgShape(),
                                            ResizeToResolution(h, w)])
-    geoset = GeoposeDataset(transform=transforms.Compose([ExtractSkyMask(),
-                                                          pad_and_center()]))
+    geoset = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
+                                                          ResizeToImgShape(),
+                                                          PadToAspectRatio(4 / 3),
+                                                          ResizeToResolution(640, 480),
+                                                          norm]))
+    # ExtractSkyMask(),
+    # ExtractSegmentationMask()d
+    # pad_and_center()]))
     dl = DataLoader(geoset, batch_size=4, shuffle=True)
     batch = next(iter(dl))
     # for k, v in s2.items():
