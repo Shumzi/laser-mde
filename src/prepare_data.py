@@ -1,16 +1,24 @@
 import numpy as np
 import torch
+from torch import nn
 from PIL import Image
 from matplotlib import pyplot as plt
 from skimage.transform import resize
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.transforms import functional as TF
-
+from mit_semseg.config import cfg
+from mit_semseg.dataset import TestDataset
 import utils as defs
 import visualize as viz
 from data_loader import GeoposeDataset, GeoposeToTensor
-from torchvision.models.segmentation import deeplabv3_resnet50
+# from torchvision.models.segmentation import deeplabv3_resnet50
+import cv2
+# segmentation imports
+import os, csv, scipy.io
+# Our libs
+from mit_semseg.models import ModelBuilder, SegmentationModule
+from mit_semseg.utils import colorEncode
 
 
 class ResizeToImgShape:
@@ -209,13 +217,94 @@ class ExtractSkyMask:
 
 class ExtractSegmentationMask:
     def __init__(self):
-        self.segmodel = deeplabv3_resnet50(pretrained=True)
-        self.segmodel.eval()
+        # self.segmodel = deeplabv3_resnet50(pretrained=True).to(device=defs.get_dev())
+        # self.segmodel.eval()
+        self.names = {}
+        with open('semseg/object150_info.csv') as f:
+            reader = csv.reader(f)
+            next(reader)
+            for row in reader:
+                self.names[int(row[0])] = row[5].split(";")[0]
+
+        # Network Builders
+        self.net_encoder = ModelBuilder.build_encoder(
+            arch='resnet50dilated',
+            fc_dim=2048,
+            weights='semseg/ckpt/ade20k-resnet50dilated-ppm_deepsup/encoder_epoch_20.pth')
+        self.net_decoder = ModelBuilder.build_decoder(
+            arch='ppm_deepsup',
+            fc_dim=2048,
+            num_class=150,
+            weights='semseg/ckpt/ade20k-resnet50dilated-ppm_deepsup/decoder_epoch_20.pth',
+            use_softmax=True)
+
+        self.crit = torch.nn.NLLLoss(ignore_index=-1)
+        self.segmentation_module = SegmentationModule(self.net_encoder, self.net_decoder, self.crit)
+        self.segmentation_module.eval()
+        self.segmentation_module.to(device=defs.get_dev())
+        # Load and normalize one image as a singleton tensor batch
+        self.pil_to_tensor = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],  # These are RGB mean+std values
+                std=[0.229, 0.224, 0.225])  # across a large photo dataset.
+        ])
+
+    def visualize_result(self, img, pred, index=None):
+        # filter prediction class if requested
+        colors = scipy.io.loadmat('semseg/color150.mat')['colors']
+        if index is not None:
+            pred = pred.copy()
+            pred[pred != index] = -1
+            print(f'{self.names[index + 1]}:')
+
+        # colorize prediction
+        pred_color = colorEncode(pred, colors).astype(np.uint8)
+
+        # aggregate images and save
+        im_vis = np.concatenate((img, pred_color), axis=1)
+        plt.imshow(Image.fromarray(im_vis))
+        plt.show()
+
 
     def __call__(self, sample):
-        segmap = self.segmodel(sample['image'])
-        viz.show_sample({**sample, 'segmap': segmap})
+        # segmap = self.segmodel(sample['image'].unsqueeze(0))['out'][0]
+        # segmap_pred = segmap.argmax(0)
+        # # create a color pallette, selecting a color for each class
+        # palette = torch.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1])
+        # colors = torch.as_tensor([i for i in range(21)])[:, None] * palette
+        # colors = (colors % 255).np().astype("uint8")
+
+        img_original = cv2.resize(sample['image'], (240, 180))
+        img_data = self.pil_to_tensor(img_original)
+        # from torchvision.transforms import functional as TF
+        # img_data = TF.resize(img_data, (480,640))
+        print(img_data.shape)
+        singleton_batch = {'img_data': img_data[None].to(device=defs.get_dev())}
+        output_size = img_data.shape[1:]
+        # Run the segmentation at the highest resolution.
+        with torch.no_grad():
+            scores = self.segmentation_module(singleton_batch, segSize=output_size)
+
+        # Get the predicted scores for each pixel
+        _, pred = torch.max(scores, dim=1)
+        pred = pred.cpu()[0].numpy()
+        self.visualize_result(img_original, pred)
+        # Top classes in answer
+        predicted_classes = np.bincount(pred.flatten()).argsort()[::-1]
+        for c in predicted_classes[:15]:
+            self.visualize_result(img_original, pred, c)
+        # plot the semantic segmentation predictions of 21 classes in each color
+        # h, w = list(sample['image'].shape[1:])
+        # r = Image.fromarray(segmap_pred.byte().cpu().np()).resize((w, h))
+        # r.putpalette(colors)
+        # plt.subplot(121)
+        # plt.imshow(r)
+        # plt.subplot(122)
+        # viz.tensor_imshow(sample['og_image'])
+        # viz.show_sample({**sample, 'segmap_pred': segmap_pred})
         plt.show()
+        return {**sample, 'segmask': pred}
     # TODO: next week, the whole segmentation git.
 
 
@@ -332,7 +421,8 @@ if __name__ == '__main__':
     aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
 
 
-    def norm(x):
+    def norm_seg(x):
+        x['og_image'] = x['image'].clone()
         x['image'] = TF.normalize(x['image'], mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         return x
 
@@ -341,22 +431,26 @@ if __name__ == '__main__':
                                            GeoposeToTensor(),
                                            ResizeToImgShape(),
                                            ResizeToResolution(h, w)])
-    geoset = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
+    geoset = GeoposeDataset(transform=transforms.Compose([ExtractSegmentationMask(),
+                                                          GeoposeToTensor(),
                                                           ResizeToImgShape(),
                                                           PadToAspectRatio(4 / 3),
-                                                          ResizeToResolution(640, 480),
-                                                          norm]))
+                                                          ResizeToResolution(480, 640),
+                                                          norm_seg,
+                                                          ]))
     # ExtractSkyMask(),
     # ExtractSegmentationMask()d
     # pad_and_center()]))
-    dl = DataLoader(geoset, batch_size=4, shuffle=True)
-    batch = next(iter(dl))
+    # dl = DataLoader(geoset, batch_size=4, shuffle=True)
+    # flickr_sge_13078985295_c4204c63a7_o
+    sample = geoset['28488116812_f5a57ca0f6_k']
     # for k, v in s2.items():
     #     if torch.is_tensor(v):
     #         s2[k] = v.unsqueeze(0)
     #     elif type(v).__name__ == 'str_':
     #         s2[k] = [v]
-    viz.show_batch(batch)
+    # viz.show_batch(batch)
+    viz.show_sample(sample)
     plt.show()
     # viz.show_batch(s2)
     # plt.show()

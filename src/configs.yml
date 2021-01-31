@@ -7,7 +7,8 @@ dataset:
   depth_foldername: depth_without_bad_images
   img_foldername: img_without_bad_images
   test_foldername: test
-  geopose_path: '/mnt/d/Users/Ariel/Documents/DS_/15. MDE with laser reference point/laser-mde/data/geoPose3K_img_and_depth'
+  geopose_path: '../data/geoPose3K'
+  # '/mnt/d/Users/Ariel/Documents/DS_/15. MDE with laser reference point/laser-mde/data/geoPose3K_img_and_depth'
   aspect_ratio: 1
   h: 512
   w: 512
