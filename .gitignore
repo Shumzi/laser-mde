@@ -93,3 +93,4 @@ target/
 /notebooks/runs/
 /src/runs/
 /models/
+/src/semseg/
