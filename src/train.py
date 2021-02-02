@@ -14,12 +14,14 @@ from matplotlib import pyplot as plt
 import model
 import visualize as viz
 from data_loader import FarsightDataset, GeoposeDataset, FarsightToTensor, get_farsight_fold_dataset
+from fcrn_pytorch.utils import loss_berhu
 from other_models.tiny_unet import UNet
 from prepare_data import crop_to_aspect_ratio_and_resize, pad_and_center, reverseMinMaxScale
 import prepare_data
 from utils import get_dev, cfg, get_folder_name, set_cfg
 from torchvision.transforms import Compose
-from model import Sobel
+from fcrn_pytorch.fcrn import FCRN
+from fcrn_pytorch.weights import load_weights
 
 logger = logging.getLogger(__name__)
 if cfg['misc']['verbose']:
@@ -94,7 +96,12 @@ def train():
             for data in train_loader:
                 # get the inputs; data is a list of [input images, depth maps]
                 img, gt_depth = data['image'], data['depth']
-                loss, pred_depth = step(criterion, img, gt_depth, net, optimizer)
+                if cfg['dataset']['use_mask']:
+                    assert 'mask' in data, 'no mask but required mask'
+                    mask = data['mask']
+                else:
+                    mask = None
+                loss, pred_depth = step(criterion, img, gt_depth, net, optimizer, mask)
                 loss_value = loss.item()
                 assert loss_value == loss_value, 'loss is nan! tf?'
                 pbar.set_postfix(**{'loss (batch)': loss_value})
@@ -117,18 +124,19 @@ def train():
                         val_score = None
                         val_sample = None
                 train_loss = running_loss / (print_every * n_batches)
-                data['log_gt_depth'] = data['depth']
-                del data['depth']
+                # data['log_gt_depth'] = data['depth']
+                # del data['depth']
                 # del data['image']
                 # TODO: see how to save og image for printing w.o doing it for every batch.
-                train_sample = {**data, 'log_pred': pred_depth}
+                train_sample = {**data, 'pred': pred_depth}
                 if cfg['validation']['hist']:
                     viz_net = net
                 else:
                     viz_net = None
                 if depth_postprocessing:
-                    train_sample['log_pred'] = depth_postprocessing(train_sample['log_pred'])
-                    train_sample['log_gt_depth'] = depth_postprocessing(train_sample['log_gt_depth'])
+                    logger.info('post-processing prediction and depth.')
+                    train_sample['pred'] = depth_postprocessing(train_sample['pred'])
+                    train_sample['depth'] = depth_postprocessing(train_sample['depth'])
                 print_stats(train_sample, val_sample,
                             train_loss, val_score, epoch,
                             writer, viz_net)
@@ -149,37 +157,20 @@ def step(criterion, img, gt_depth, net, optimizer, mask=None):
     Returns: loss: float, predicted depth map: torch.Tensor.
 
     """
-    cos = nn.CosineSimilarity(dim=1, eps=0)
-    get_gradient = Sobel().cuda()
-    ones = torch.ones(gt_depth.size(0), 1, gt_depth.size(2), gt_depth.size(3)).float().cuda()
-    ones = torch.autograd.Variable(ones)
+
     optimizer.zero_grad()
-    pred = net(img).unsqueeze(1)
-    gt_grad = get_gradient(gt_depth)
-    pred_grad = get_gradient(pred)
-    gt_grad_dx = gt_grad[:, 0, :, :].contiguous().view_as(gt_depth)
-    gt_grad_dy = gt_grad[:, 1, :, :].contiguous().view_as(gt_depth)
-    pred_grad_dx = pred_grad[:, 0, :, :].contiguous().view_as(gt_depth)
-    pred_grad_dy = pred_grad[:, 1, :, :].contiguous().view_as(gt_depth)
-    depth_normal = torch.cat((-gt_grad_dx, -gt_grad_dy, ones), 1)
-    output_normal = torch.cat((-pred_grad_dx, -pred_grad_dy, ones), 1)
-    loss_depth = criterion(pred, gt_depth)
-    # loss_depth = torch.log(torch.abs(pred - gt_depth) + 0.5).mean()
-    loss_dx = torch.log(torch.abs(pred_grad_dx - gt_grad_dx) + 1).mean()
-    loss_dy = torch.log(torch.abs(pred_grad_dy - gt_grad_dy) + 1).mean()
-    loss_normal = torch.abs(1 - cos(output_normal, depth_normal)).mean()
-    if cfg['optim']['use_triple']:
-        loss = loss_depth + loss_normal + (loss_dx + loss_dy)
-    else:
-        loss = loss_depth
+    pred = net(img)
+    loss = criterion(pred.squeeze(), gt_depth.squeeze())
     # pred.retain_grad()
     # if mask is not None:
-    #     loss = criterion(pred[mask.squeeze(1)], gt_depth.squeeze()[mask.squeeze(1)])
+    #     loss = criterion(pred * mask, gt_depth * mask)
+    # else:
+    #     loss = criterion(pred, gt_depth)
     #     # pred *= mask.squeeze(1)
     #     # pred.register_hook(lambda grad: grad * mask)
     #     # TODO: maybe just do criterion on pred and gt * mask?
     # else:
-    torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)
     loss.backward()
     optimizer.step()
     return loss, pred
@@ -204,7 +195,8 @@ def eval_net(net, loader, metric):
         for i, batch in enumerate(loader):
             imgs, gt_depths = batch['image'], batch['depth']
             with torch.no_grad():
-                pred_depths = net(imgs).unsqueeze(1)
+                # .unsqueeze(1)
+                pred_depths = net(imgs)
             score += metric(pred_depths, gt_depths)
             if i == n_val - 1:
                 val_sample.update({**batch, 'pred': pred_depths})
@@ -285,22 +277,26 @@ def get_net():
     cfg_checkpoint = cfg['checkpoint']
     cfg_optim = cfg['optim']
     model_name = cfg_model['name'].lower()
-    if model_name == 'unet':
-        if cfg['dataset']['name'] == 'geopose':
-            if cfg['dataset']['use_mask']:
-                in_channel = 4
-            else:
-                in_channel = 3
-            net = UNet(in_channel=in_channel)
-            # TODO: fix if you don't do minmax scaling in the end.
-        else:
-            net = UNet()
+    if model_name == 'fcrn':
+        net = FCRN()
+    elif model_name == 'unet':
+        # if cfg['dataset']['name'] == 'geopose':
+        #     if cfg['dataset']['use_mask']:
+        #         in_channel = 4
+        #     else:
+        #         in_channel = 3
+        #     # TODO: fix if you don't do minmax scaling in the end.
+        # else:
+        #     in_channel = 3
+        net = UNet(3)
     elif model_name == 'toynet':
         net = model.toyNet()
     else:
         raise ValueError("can only use UNET or toynet.")
     if cfg_model['weight_init'] and not cfg_checkpoint['use_saved']:
         net.apply(weight_init)
+    elif cfg_model['weight_file']:
+        load_weights(net, cfg_model['weight_file'], torch.cuda.FloatTensor)
     net.to(device=get_dev())
     print('using ', get_dev())
     # TODO: use loss in configs for loss.
@@ -318,9 +314,11 @@ def get_criterion():
     elif loss_func_name.startswith('mse'):
         criterion = nn.MSELoss()
     elif loss_func_name == 'triple':
-        pass # TODO: TRIPLE. but do you though? maybe fastdepth..
+        criterion = model.triple_loss()  # TODO: TRIPLE. but do you though? maybe fastdepth..
     elif loss_func_name == 'grad':
-        pass # TODO: GRAD
+        pass  # TODO: GRAD
+    elif loss_func_name == 'berhu':
+        criterion = loss_berhu()
     else:
         raise ValueError("not good criterion.")
     return criterion
@@ -328,9 +326,8 @@ def get_criterion():
 
 def get_geopose_split(subset_size, val_percent):
     if cfg['dataset']['use_mask']:
-        tf = Compose([prepare_data.ExtractSkyMask(),
-                      pad_and_center(),
-                      prepare_data.maybe_add_mask])
+        tf = Compose([pad_and_center(),
+                      prepare_data.ExtractSkyMask()])
     else:
         tf = pad_and_center()
     ds = GeoposeDataset(transform=tf)

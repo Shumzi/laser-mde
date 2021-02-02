@@ -87,7 +87,12 @@ def show_batch(batch):
         if len(image_type.shape) == 2:
             image_type = np.expand_dims(image_type, 0)
         for j, img in enumerate(image_type):
-            im = ax[u(i * batch_size + j)].imshow(img)
+            if img.min() < 0:
+                # depths etc, just show whatever you can.
+                scaled = (img.squeeze() - img.min()) / (img.max() - img.min())
+                im = ax[u(i * batch_size + j)].imshow(scaled)
+            else:
+                im = ax[u(i * batch_size + j)].imshow(img.squeeze())
             if len(img.shape) == 2:  # grayscale
                 fig.colorbar(im, ax=ax[u(i * batch_size + j)])
     return fig
@@ -152,7 +157,7 @@ def tensor_imshow(img):
     Returns: fig of image.
 
     """
-    return plt.imshow(img.cpu().numpy().transpose((1, 2, 0)))
+    return plt.imshow(img.detach().cpu().numpy().transpose((1, 2, 0)))
 
 
 def show_geopose_sample_with_blend(sample):

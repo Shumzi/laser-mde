@@ -94,3 +94,4 @@ target/
 /src/runs/
 /models/
 /src/semseg/
+/fcrn_pytorch/

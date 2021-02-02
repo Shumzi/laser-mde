@@ -92,6 +92,26 @@ class RMSLELoss(nn.Module):
         return torch.sqrt(self.mse(torch.log(pred + 1), torch.log(actual + 1)))
 
 
+def triple_loss(pred, gt_depth):
+    cos = nn.CosineSimilarity(dim=1, eps=0)
+    get_gradient = Sobel().cuda()
+    ones = torch.ones(gt_depth.size(0), 1, gt_depth.size(2), gt_depth.size(3)).float().cuda()
+    ones = torch.autograd.Variable(ones)
+    gt_grad = get_gradient(gt_depth)
+    pred_grad = get_gradient(pred)
+    gt_grad_dx = gt_grad[:, 0, :, :].contiguous().view_as(gt_depth)
+    gt_grad_dy = gt_grad[:, 1, :, :].contiguous().view_as(gt_depth)
+    pred_grad_dx = pred_grad[:, 0, :, :].contiguous().view_as(gt_depth)
+    pred_grad_dy = pred_grad[:, 1, :, :].contiguous().view_as(gt_depth)
+    depth_normal = torch.cat((-gt_grad_dx, -gt_grad_dy, ones), 1)
+    output_normal = torch.cat((-pred_grad_dx, -pred_grad_dy, ones), 1)
+    loss_depth = torch.log(torch.abs(pred - gt_depth) + 0.5).mean()
+    loss_dx = torch.log(torch.abs(pred_grad_dx - gt_grad_dx) + 1).mean()
+    loss_dy = torch.log(torch.abs(pred_grad_dy - gt_grad_dy) + 1).mean()
+    loss_normal = torch.abs(1 - cos(output_normal, depth_normal)).mean()
+    return loss_depth + loss_normal + (loss_dx + loss_dy)
+
+
 class EigenDepthLoss(nn.Module):
     """
     eigen depth which promotes structural consistency.

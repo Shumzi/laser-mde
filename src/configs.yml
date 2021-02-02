@@ -2,7 +2,7 @@
 
 
 dataset:
-  name: geopose
+  name: farsight
   data_dir: ../data/farsight
   depth_foldername: depth_without_bad_images
   img_foldername: img_without_bad_images
@@ -10,9 +10,9 @@ dataset:
   geopose_path: '../data/geoPose3K'
   # '/mnt/d/Users/Ariel/Documents/DS_/15. MDE with laser reference point/laser-mde/data/geoPose3K_img_and_depth'
   aspect_ratio: 1
-  h: 512
-  w: 512
-  use_mask: True
+  h: 256 #228
+  w: 256 #300
+  use_mask: False
 misc:
   verbose: True
   random_seed: 42 # if none won't have constant seed.
@@ -25,38 +25,40 @@ checkpoint:
   # if save_every is empty, it won't save.
   use_saved: False # will continue in trains showing old config file.
   saved_path:
-  run_name: geo_w_mask_500_triple_loss_w_val
+  run_name: more_tests
   save_every:
 
 model:
   # is irrelevant if you're loading a saved model.
   # arch is prebuilt into the .pt file. easier to handle it.
-  weight_init: True
-  name: UNet
+  weight_init: False
+  weight_file: "../fcrn_pytorch/model/NYU_ResNet-UpProj.npy"
+  name: UNET
   use_bn: True
   use_double_bn: False
   dropout:
 
 optim:
-  loss: triple # rmsle, triple or grad.
+  loss: rmsle # rmsle, berhu triple or grad.
   lr: 1.e-2
   use_lr_scheduler: False
   # randomdata?
   # shuffledata?
 
 train:
-  batch_size: 4
+  batch_size: 16
   epochs: 1000
-  subset_size: 500
+  subset_size:
   use_folds: True
-  print_every: 1
+  print_every: 10
 
 validation:
   batch_size: 10
   val_round: True
   val_percent: 0.2
-  shuffle_val: False
+  shuffle_val: True
   hist: False
+#  metric: rmsle
 
 data_augmentation:
   flip_p: 0.5
@@ -71,3 +73,5 @@ normalization:
   depth_max: 254957
   image_mean: [0.4168, 0.4701, 0.5008]
   image_std: [0.1869, 0.1803, 0.1935]
+  depth_mean: 3808.661
+  std_mean: 3033.6562

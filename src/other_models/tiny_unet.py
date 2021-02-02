@@ -52,6 +52,8 @@ class UNetUpBlock(nn.Module):
 
     def forward(self, x, bridge):
         up = self.up(x)
+        # if bridge.shape != up.shape:
+        #     bridge = bridge[:, :, :up.shape[2], :]
         out = torch.cat([up, bridge], 1)
         out = self.conv_block(out)
         return out
@@ -108,6 +110,6 @@ class UNet(nn.Module):
 
         last = self.last(up3)
         if self.sigmoid:
-            return torch.sigmoid(last.squeeze())
+            return torch.sigmoid(last)
         else:
-            return last.squeeze()
+            return last
