@@ -8,6 +8,7 @@ from tqdm import tqdm
 import visualize as viz
 from torch.utils.tensorboard import SummaryWriter
 import math
+import segmentation_models_pytorch as smp
 
 
 class Squeeze(nn.Module):
@@ -32,6 +33,21 @@ def toyNet():
         #         WeightValues('convT2'),
         Squeeze()
     )
+
+
+class ResnetUnet(nn.Module):
+    def __init__(self):
+        super(ResnetUnet, self).__init__()
+        self.model = smp.Unet(
+            encoder_name="resnet34",  # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
+            encoder_weights="imagenet",  # use `imagenet` pre-trained weights for encoder initialization
+            in_channels=3,  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
+            classes=1,  # model output channels (number of classes in your dataset)
+        )
+
+    def forward(self, image):
+        x = self.model(image)
+        return torch.sigmoid(x)
 
 
 class EigenCoarse(nn.Module):
@@ -111,6 +127,18 @@ def triple_loss(pred, gt_depth):
     loss_normal = torch.abs(1 - cos(output_normal, depth_normal)).mean()
     return loss_depth + loss_normal + (loss_dx + loss_dy)
 
+
+def grad_loss(pred, gt_depth):
+    get_gradient = Sobel().cuda()
+    gt_grad = get_gradient(gt_depth)
+    pred_grad = get_gradient(pred)
+    gt_grad_dx = gt_grad[:, 0, :, :].contiguous().view_as(gt_depth)
+    gt_grad_dy = gt_grad[:, 1, :, :].contiguous().view_as(gt_depth)
+    pred_grad_dx = pred_grad[:, 0, :, :].contiguous().view_as(gt_depth)
+    pred_grad_dy = pred_grad[:, 1, :, :].contiguous().view_as(gt_depth)
+    loss_dx = torch.log(torch.abs(pred_grad_dx - gt_grad_dx) + 1).mean()
+    loss_dy = torch.log(torch.abs(pred_grad_dy - gt_grad_dy) + 1).mean()
+    return loss_dx + loss_dy
 
 class EigenDepthLoss(nn.Module):
     """

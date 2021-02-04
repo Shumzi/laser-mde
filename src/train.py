@@ -1,7 +1,6 @@
 import logging
 import os
 from pathlib import Path
-# error: AttributeError: 'numpy.ndarray' object has no attribute 'unsqueeze'
 import torch
 import torch.nn as nn
 from clearml import Task
@@ -22,6 +21,7 @@ from utils import get_dev, cfg, get_folder_name, set_cfg
 from torchvision.transforms import Compose
 from fcrn_pytorch.fcrn import FCRN
 from fcrn_pytorch.weights import load_weights
+import segmentation_models_pytorch as smp
 
 logger = logging.getLogger(__name__)
 if cfg['misc']['verbose']:
@@ -45,7 +45,10 @@ def weight_init(m):
     """
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
         nn.init.kaiming_normal_(m.weight.data, nonlinearity='relu')
-        nn.init.zeros_(m.bias)
+        if m.bias:
+            nn.init.zeros_(m.bias)
+        else:
+            logger.info(f'no bias for {m}')
 
 
 def train():
@@ -119,6 +122,8 @@ def train():
                 #     # TODO: maybe add train_val
                 if not cfg_optim['use_lr_scheduler']:
                     if cfg_validation['val_round']:
+                        assert cfg_validation[
+                                   'val_percent'] is not None, 'required val_round but didn\'t give a split size'
                         val_score, val_sample = eval_net(net, val_loader, criterion)
                     else:
                         val_score = None
@@ -160,14 +165,14 @@ def step(criterion, img, gt_depth, net, optimizer, mask=None):
 
     optimizer.zero_grad()
     pred = net(img)
-    loss = criterion(pred.squeeze(), gt_depth.squeeze())
+    # loss = criterion(pred.squeeze(), gt_depth.squeeze())
     # pred.retain_grad()
-    # if mask is not None:
-    #     loss = criterion(pred * mask, gt_depth * mask)
-    # else:
-    #     loss = criterion(pred, gt_depth)
-    #     # pred *= mask.squeeze(1)
-    #     # pred.register_hook(lambda grad: grad * mask)
+    if mask is not None:
+        loss = criterion(pred * mask, gt_depth * mask)
+    else:
+        loss = criterion(pred, gt_depth)
+        # pred *= mask.squeeze(1)
+        # pred.register_hook(lambda grad: grad * mask)
     #     # TODO: maybe just do criterion on pred and gt * mask?
     # else:
     # torch.autograd.set_detect_anomaly(True)
@@ -244,11 +249,7 @@ def print_stats(train_sample, val_sample,
 
     print_hist = cfg['validation']['hist']
     if print_hist:
-        for tag, value in net.named_parameters():
-            tag = tag.replace('.', '/')
-            writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
-            writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
-        writer.add_histogram('values', train_sample['log_pred'].detach().cpu().numpy(), epoch)
+        viz.vis_weight_dist(net, writer, epoch)
     logger.info('logging images...')
     fig = viz.show_batch(train_sample)
     fig.suptitle(f'train, epoch {epoch}', fontsize='xx-large')
@@ -256,7 +257,8 @@ def print_stats(train_sample, val_sample,
         plt.show()
     writer.add_figure(tag='viz/train', figure=fig, global_step=epoch)
     if val_sample is not None:
-        fig = viz.show_batch(viz.get_sub_batch(val_sample, cfg['train']['batch_size']))
+        # viz.get_sub_batch(val_sample, cfg['train']['batch_size'])
+        fig = viz.show_batch(val_sample)
         fig.suptitle(f'val, epoch {epoch}', fontsize='xx-large')
         if cfg['misc']['plt_show']:
             plt.show()
@@ -289,13 +291,16 @@ def get_net():
         # else:
         #     in_channel = 3
         net = UNet(3)
+    elif model_name.startswith('resnet'):
+        net = model.ResnetUnet()
     elif model_name == 'toynet':
         net = model.toyNet()
     else:
-        raise ValueError("can only use UNET or toynet.")
+        raise ValueError("model not supported.")
     if cfg_model['weight_init'] and not cfg_checkpoint['use_saved']:
         net.apply(weight_init)
-    elif cfg_model['weight_file']:
+        logger.info('init\'d weights with kaiming normal & zero bias')
+    elif cfg_model['weight_file'] and model_name == 'fcrn':
         load_weights(net, cfg_model['weight_file'], torch.cuda.FloatTensor)
     net.to(device=get_dev())
     print('using ', get_dev())
@@ -314,9 +319,9 @@ def get_criterion():
     elif loss_func_name.startswith('mse'):
         criterion = nn.MSELoss()
     elif loss_func_name == 'triple':
-        criterion = model.triple_loss()  # TODO: TRIPLE. but do you though? maybe fastdepth..
+        criterion = model.triple_loss
     elif loss_func_name == 'grad':
-        pass  # TODO: GRAD
+        criterion = model.grad_loss
     elif loss_func_name == 'berhu':
         criterion = loss_berhu()
     else:
@@ -327,7 +332,8 @@ def get_criterion():
 def get_geopose_split(subset_size, val_percent):
     if cfg['dataset']['use_mask']:
         tf = Compose([pad_and_center(),
-                      prepare_data.ExtractSkyMask()])
+                      prepare_data.ExtractSkyMask(),
+                      prepare_data.ExtractSegmentationMaskSimple()])
     else:
         tf = pad_and_center()
     ds = GeoposeDataset(transform=tf)
@@ -417,7 +423,7 @@ def save_checkpoint(epoch, net, optimizer, running_loss):
     Returns: None (checkpoint saved).
 
     """
-    logging.info(f'\nsaving checkpoint at epoch {epoch}...')
+    logger.info(f'\nsaving checkpoint at epoch {epoch}...')
     folder = get_folder_name()
     folder = os.path.join('../models', folder)
     filename = 'epoch_' + str(epoch).zfill(4) + '.pt'
@@ -435,13 +441,15 @@ def save_checkpoint(epoch, net, optimizer, running_loss):
     }, full_path)
 
 
-def load_checkpoint():
+def load_checkpoint(path=None):
     """
     load a saved checkpoint from the training process,
     be it for continued training or inference.
     location from which to load checkpoint is defined in configs.yml file.
 
     Args:
+        path (string, optional): specify manual location of checkpoint.
+                                 defaults to path in configs file.
     Returns: (net, optim, epoch, loss) where:
         net: weighted net
         optim: weighted optimizer
@@ -449,13 +457,14 @@ def load_checkpoint():
         loss: current loss in checkpoint.
 
     """
-    path = os.path.join('..', 'models', cfg['checkpoint']['saved_path'])
+    if path is None:
+        path = os.path.join('..', 'models', cfg['checkpoint']['saved_path'])
     if not path.endswith('.pt'):
         # default to last trained model.
         path = os.path.join(path, max(os.listdir(path)))
     if not os.path.exists(path):
         raise FileNotFoundError
-    logging.info(f'loading from {path}')
+    logger.info(f'loading from {path}')
     checkpoint = torch.load(path)
     net = checkpoint['model']
     optim = checkpoint['optimizer']

@@ -1,16 +1,17 @@
-"""
-assuming model works, just get images and output depth maps for said images.
-"""
-
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
 from torch.utils.data import DataLoader
-
 import visualize as viz
-from data_loader import FarsightTestDataset
+from data_loader import FarsightTestDataset, GeoposeDataset
 from train import load_checkpoint
 from utils import get_dev
+from prepare_data import ResizeToAlmostResolution, GeoposeToTensor, CenterAndCrop, norm_img_imagenet
+from torchvision.transforms import Compose
+from utils import cfg
+"""
+assuming model works, just get images and output depth maps for said images.
+"""
 
 
 def single_image_to_tensor(image):
@@ -22,8 +23,15 @@ def single_image_to_tensor(image):
 def infer():
     net, optim, epoch, loss = load_checkpoint()
     net.eval()
+    dataset = cfg['dataset']['name']
+    h, w = cfg['dataset']['h'], cfg['dataset']['w']
+    if dataset.lower() == 'geopose':
+        compose = Compose([ResizeToAlmostResolution(h, w, upper_bound=True),
+                           GeoposeToTensor(),
+                           CenterAndCrop(h, w),
+                           norm_img_imagenet, ])
+        # test_ds = DataLoader(GeoposeDataset(transform=))
 
-    test_ds = DataLoader(FarsightTestDataset(transform=single_image_to_tensor))
     image_batch = None
     depth_batch = None
     names = []

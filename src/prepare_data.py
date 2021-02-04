@@ -32,6 +32,10 @@ class ResizeToImgShape:
         Args:
             sample: dict(Tensors), data sample with an 'image', 'depth' and possibly other images
         """
+        dims = {}
+        for k, v in sample.items():
+            if k != 'name':
+                dims[k] = len(v.shape)
         d1, d2, d3 = sample['image'].shape
         for k, img in sample.items():
             if k == 'image':
@@ -49,6 +53,9 @@ class ResizeToImgShape:
         # blended = blend_images(TF.to_pil_image(image), TF.to_pil_image(depth_resized))
         # plt.imshow(blended)
         # plt.show()
+        for k, v in sample.items():
+            if k != 'name':
+                assert dims[k] == len(v.shape), f"{k}'s dim changed from {dims[k]} to {len(v.shape)}"
         return sample
 
 
@@ -133,8 +140,8 @@ class ResizeToAlmostResolution:
             elif torch.is_tensor(img):
                 # viz.tensor_imshow(img)
                 if k == 'image':
-                    sample[k] = F.interpolate(img, (self.h, self.w),
-                                              mode='bilinear')
+                    sample[k] = F.interpolate(img.unsqueeze(0), (self.h, self.w),
+                                              mode='bilinear', align_corners=False).squeeze(0)
                 else:
                     sample[k] = TF.resize(img, (self.h, self.w),
                                           interpolation=Image.NEAREST)  # don't want -1's and shit to get f'd up.
@@ -169,8 +176,8 @@ class ResizeToResolution:
                 # viz.tensor_imshow(img)
                 if k == 'image':
 
-                    sample[k] = F.interpolate(img, (self.h, self.w),
-                                              mode='bilinear')
+                    sample[k] = F.interpolate(img.unsqueeze(0), (self.h, self.w),
+                                              mode='bilinear', align_corners=False).squeeze(0)
                 else:
                     sample[k] = TF.resize(img, (self.h, self.w),
                                           interpolation=Image.NEAREST)  # don't want -1's and shit to get f'd up.
@@ -350,24 +357,34 @@ class ExtractSegmentationMask:
 
     def __call__(self, sample):
         img_data = sample['image']
-        img_original = sample['og_image'].cpu().numpy().transpose(1, 2, 0)
-        print(img_data.shape)
+        old_shape = img_data.shape[1], img_data.shape[2]
+        img_data = ResizeToAlmostResolution(180, 224)({'image': img_data})['image']
+        # img_original = sample['og_image'].cpu().numpy().transpose(1, 2, 0)
+        # print(img_data.shape)
         singleton_batch = {'img_data': img_data[None]}
         output_size = img_data.shape[1:]
         # Run the segmentation at the highest resolution.
         with torch.no_grad():
             scores = self.segmentation_module(singleton_batch, segSize=output_size)
-
         # Get the predicted scores for each pixel
         _, pred = torch.max(scores, dim=1)
-        pred = pred.cpu()[0].numpy()
-        self.visualize_result(img_original, pred)
-        # Top classes in answer
-        # predicted_classes = np.bincount(pred.flatten()).argsort()[::-1]
-        # for c in predicted_classes[:15]:
-        #     self.visualize_result(img_original, pred, c)
-        plt.show()
-        return {**sample, 'segmask': TF.to_tensor(pred)}
+        pred = TF.resize(pred, old_shape, Image.NEAREST)
+        bad_classes = torch.Tensor([1, 4, 12, 20, 25, 83, 116, 126, 127]).to(device=defs.get_dev())
+        pred[(pred[..., None] == bad_classes).any(-1)] = 0
+        # segmasknp = np.isin(pred.cpu().numpy(), , invert=True)
+        # segmask = torch.from_numpy(segmasknp).to(device=defs.get_dev())
+        if 'mask' in sample:
+            sample['mask'] = sample['mask'] & pred
+        else:
+            sample['mask'] = pred
+            # pred = pred.cpu()[0].numpy()
+            # self.visualize_result(img_original, pred)
+            # Top classes in answer
+            # predicted_classes = np.bincount(pred.flatten()).argsort()[::-1]
+            # for c in predicted_classes[:15]:
+            #     self.visualize_result(img_original, pred, c)
+            # plt.show()
+        return sample
 
 
 class ExtractSegmentationMaskSimple:
@@ -426,12 +443,12 @@ class ExtractSegmentationMaskSimple:
 
 class NormalizeDepth:
     def __call__(self, sample):
-        depth_mean = torch.Tensor([cfg['normalization']['depth_mean']])
-        depth_std = torch.Tensor([cfg['normalization']['std_mean']])
+        depth_mean = torch.Tensor([defs.cfg['normalization']['depth_mean']]).to(device=defs.get_dev())
+        depth_std = torch.Tensor([defs.cfg['normalization']['std_mean']]).to(device=defs.get_dev())
         sample['depth'] = TF.normalize(sample['depth'], depth_mean, depth_std).to(device=defs.get_dev())
-        # adding min to norm so all values will be above 0 (since we're using rmsle).
-        if cfg['optim']['loss'].lower() == 'rmsle':
-            sample['depth'] += torch.Tensor(depth_mean - 1 / depth_std)
+        # adding min to norm so all values will be above 0 (if we're using rmsle).
+        if defs.cfg['optim']['loss'].lower() == 'rmsle':
+            sample['depth'] += torch.Tensor([(depth_mean + 1) / depth_std]).to(device=defs.get_dev())
         return sample
 
 
@@ -508,20 +525,25 @@ def crop_to_aspect_ratio_and_resize():
                                CropToAspectRatio(aspect_ratio=aspect_ratio),
                                ResizeToResolution(h, w),
                                norm_img_imagenet,
-                               NormMinMaxDepth()])
+                               NormalizeDepth()])
     # ExtractSkyMask()])
 
 
 def pad_and_center():
     cfg_ds = defs.cfg['dataset']
     h, w = cfg_ds['h'], cfg_ds['w']
-    return transforms.Compose([FillNaNsFFS(),
-                               ResizeToImgShape(),
-                               ResizeToAlmostResolution(h, w, upper_bound=True),
-                               GeoposeToTensor(),
-                               CenterAndCrop(h, w),
-                               norm_img_imagenet,
-                               NormMinMaxDepth()])
+    cmp = transforms.Compose([FillNaNsFFS(),
+                              ResizeToImgShape(),
+                              ResizeToAlmostResolution(h, w, upper_bound=True),
+                              GeoposeToTensor(),
+                              CenterAndCrop(h, w),
+                              norm_img_imagenet,
+                              ])
+    if defs.cfg['normalization']['depth_norm'] == 'minmax':
+        cmp = transforms.Compose([cmp, NormMinMaxDepth()])
+    elif defs.cfg['normalization']['depth_norm'] == 'z':
+        cmp = transforms.Compose([cmp, NormalizeDepth()])
+    return cmp
 
 
 class ToPIL:
@@ -551,6 +573,9 @@ if __name__ == '__main__':
     # s2 = next(iter(geoset_no_crop))
     # print single sample,
     # since if we don't crop we can't have them all in one batch.
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
     cfg_ds = defs.cfg['dataset']
     aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
 
@@ -558,18 +583,19 @@ if __name__ == '__main__':
                                            GeoposeToTensor(),
                                            ResizeToImgShape(),
                                            ResizeToResolution(h, w)])
-    geoset = GeoposeDataset(transform=transforms.Compose([
-        FillNaNsFFS(),
-        ResizeToImgShape(),
-        ResizeToAlmostResolution(180, 240),
-        GeoposeToTensor(),
-        ExtractSkyMask(),
-        norm_img_imagenet,
-        ExtractSegmentationMaskSimple(),
-        # TODO: set_seg_to_null or minus one, whatever.
-        PadToAspectRatio(4 / 3),
-
-    ]))
+    geoset = GeoposeDataset()
+    # geoset = GeoposeDataset(transform=transforms.Compose([
+    #     FillNaNsFFS(),
+    #     ResizeToImgShape(),
+    #     ResizeToAlmostResolution(180, 240),
+    #     GeoposeToTensor(),
+    #     ExtractSkyMask(),
+    #     norm_img_imagenet,
+    #     ExtractSegmentationMaskSimple(),
+    #
+    #     PadToAspectRatio(4 / 3),
+    #
+    # ]))
     # flickr_sge_13078985295_c4204c63a7_o
     # 28488116812_f5a57ca0f6_k
     # flickr_sge_10118947555_a8a13b6338_o_grid_1_0
@@ -579,7 +605,10 @@ if __name__ == '__main__':
     # flickr_sge_12052835295_6bc07b9b18_o
     # eth_ch1_IMG_5238_01024
     # flickr_sge_12052835295_6bc07b9b18_o
-    sample = geoset['flickr_sge_3476145360_a989526084_o']
+    sample = geoset['eth_ch1_39298990_01024']
+    pred = np.load('depthestim.npy', allow_pickle=True)
     # viz.show_batch(batch)
-    viz.show_sample(sample)
+    d = cv2.resize(sample['depth'], (1024, 684), interpolation=cv2.INTER_NEAREST)
+    disp = abs(d - pred)
+    viz.show_sample({**sample, 'pred': pred, 'disp': disp})
     plt.show()

@@ -16,8 +16,14 @@ from PIL import Image, ImageOps
 import utils as defs
 import visualize as viz
 from utils import get_depth_dir, get_img_dir, get_test_dir
+import logging
+from utils import cfg
 
 cfg_aug = defs.cfg['data_augmentation']
+
+logger = logging.getLogger(__name__)
+if cfg['misc']['verbose']:
+    logger.setLevel(logging.INFO)
 
 
 class GeoposeDataset(Dataset):
@@ -32,6 +38,9 @@ class GeoposeDataset(Dataset):
         """
         self.dir = defs.cfg['dataset']['geopose_path']
         self.transform = transform
+        if transform is not None and defs.cfg['misc']['verbose']:
+            logger.info('using the following transforms:')
+            logger.info(self.transform)
         self.foldernames = np.array(
             [fn for fn in os.listdir(self.dir) if os.path.isdir(join(self.dir, fn)) and not fn.startswith('.')])
         self.foldernames.sort()
@@ -159,6 +168,7 @@ class FarsightTestDataset(Dataset):
             image = self.transform(image)
 
         return {'image': image, 'name': self.filenames[idx].strip('.png')}
+
 
 # TODO: move all augmentations to prepare_data.
 class FarsightToTensor(object):

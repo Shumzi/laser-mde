@@ -87,12 +87,13 @@ def show_batch(batch):
         if len(image_type.shape) == 2:
             image_type = np.expand_dims(image_type, 0)
         for j, img in enumerate(image_type):
-            if img.min() < 0:
-                # depths etc, just show whatever you can.
-                scaled = (img.squeeze() - img.min()) / (img.max() - img.min())
-                im = ax[u(i * batch_size + j)].imshow(scaled)
-            else:
-                im = ax[u(i * batch_size + j)].imshow(img.squeeze())
+            # if img.min() < 0:
+            #     # depths etc, just show whatever you can.
+            #     scaled = (img.squeeze() - img.min()) / (img.max() - img.min())
+            #     im = ax[u(i * batch_size + j)].imshow(scaled)
+            # else:
+
+            im = ax[u(i * batch_size + j)].imshow(img.squeeze())
             if len(img.shape) == 2:  # grayscale
                 fig.colorbar(im, ax=ax[u(i * batch_size + j)])
     return fig
@@ -169,6 +170,15 @@ def show_geopose_sample_with_blend(sample):
     """
     sample['blend'] = blend_images(sample['image'], sample['depth'])
     return show_sample(sample)
+
+
+def vis_weight_dist(net, writer, epoch):
+    for tag, value in net.named_parameters():
+        tag = tag.replace('.', '/')
+        writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
+        if value.grad is not None:
+            writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
+    # writer.add_histogram('values', train_sample['log_pred'].detach().cpu().numpy(), epoch)
 
 
 if __name__ == '__main__':
