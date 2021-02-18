@@ -1,17 +1,21 @@
+import random
+from random import shuffle
+
 import numpy as np
+import pandas as pd
 import torch
 from torch import nn
 from PIL import Image
 from matplotlib import pyplot as plt
 from skimage.transform import resize
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset, random_split, ConcatDataset
 from torchvision import transforms
-from torchvision.transforms import functional as TF
+from torchvision.transforms import functional as TF, Compose
 from mit_semseg.config import cfg
 from mit_semseg.dataset import TestDataset
 import utils as defs
 import visualize as viz
-from data_loader import GeoposeDataset, GeoposeToTensor
+from data_loader import GeoposeDataset, GeoposeToTensor, FarsightDataset, FarsightToTensor
 from torchvision.models.segmentation import deeplabv3_resnet50
 import cv2
 # segmentation imports
@@ -20,6 +24,13 @@ import os, csv, scipy.io
 from mit_semseg.models import ModelBuilder, SegmentationModule
 from mit_semseg.utils import colorEncode
 from torch.nn import functional as F
+
+from utils import cfg, get_img_dir
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+cfg_aug = defs.cfg['data_augmentation']
 
 
 class ResizeToImgShape:
@@ -46,13 +57,9 @@ class ResizeToImgShape:
                 # segmap really can't be interpolated, bc values are supposed to be constant.
                 img = TF.resize(img, (d2, d3), interpolation=Image.NEAREST)
                 sample[k] = img
-                # viz.tensor_imshow(img)
             elif type(img) == np.ndarray:
                 img = cv2.resize(img, (d2, d1), interpolation=cv2.INTER_NEAREST)
                 sample[k] = img
-        # blended = blend_images(TF.to_pil_image(image), TF.to_pil_image(depth_resized))
-        # plt.imshow(blended)
-        # plt.show()
         for k, v in sample.items():
             if k != 'name':
                 assert dims[k] == len(v.shape), f"{k}'s dim changed from {dims[k]} to {len(v.shape)}"
@@ -72,30 +79,34 @@ class CropToAspectRatio:
     def __call__(self, sample):
         for k, img in sample.items():
             if torch.is_tensor(img):
-                # viz.tensor_imshow(img)
                 h, w = img.shape[1], img.shape[2]
                 if h * self.aspect_ratio > w:
                     disparity = int(h - w // self.aspect_ratio)
                     top = disparity // 2
                     height = h - disparity
                     img = TF.crop(img, top=top, left=0, height=height, width=w)
-                    # viz.tensor_imshow(img)
-                    # assert int(img.shape[1] * self.aspect_ratio) == w, 'aspect ratio still not checking out.'
                     sample[k] = img
                 elif h * self.aspect_ratio < w:
                     disparity = int(w - h * self.aspect_ratio)
                     left = disparity // 2
-                    width = w - disparity  # //2*2 to fix possible misalignment.
+                    width = w - disparity
                     img = TF.crop(img, top=0, left=left, height=h, width=width)
-                    # viz.tensor_imshow(img)
                     h, w = img.shape[1], img.shape[2]
                     assert int(h * self.aspect_ratio) == w, 'aspect ratio still not checking out.'
                     sample[k] = img
         return sample
 
 
-def maybe_add_mask(sample):
-    if defs.cfg['dataset']['use_mask']:
+def add_mask_to_img_if_in_configs(sample):
+    """
+    adds mask to image if so defined in configs
+    Args:
+        sample:
+
+    Returns: added mask.
+
+    """
+    if defs.cfg['dataset']['use_mask'] and defs.cfg['dataset']['add_mask_to_image']:
         assert 'mask' in sample, 'use_mask set to True but no mask provided in sample.'
         mask = sample['mask']
         sample['image'] = torch.cat((sample['image'], mask), dim=0)
@@ -226,36 +237,13 @@ class PadToResolution:
     """
 
     def __init__(self, height, width):
-        # self.h = height
-        # self.w = width
         self.pad_to_aspect_ratio = PadToAspectRatio(width / height)
 
     def __call__(self, sample):
         self.pad_to_aspect_ratio = PadToAspectRatio(sample)
-        # for k, img in sample.items():
-        #     if torch.is_tensor(img) or isinstance(img, np.ndarray):
-        #         # viz.tensor_imshow(img)
-        #         if isinstance(img, np.ndarray):
-        #             sample_h, sample_w = img.shape[0], img.shape[1]
-        #         else:
-        #             sample_h, sample_w = img.shape[1], img.shape[2]
-        #         pad_h, pad_w = 0, 0
-        #         if sample_h < self.h:
-        #             pad_h = self.h - sample_h
-        #         if sample_w < self.w:
-        #             pad_w = self.w - sample_w
-        #         # pad to get to required resolution,
-        #         # add 1 extra pad for right and bottom if resolution diff is odd.
-        #         border = (pad_w // 2, pad_h // 2, (pad_w + 1) // 2, (pad_h + 1) // 2)
-        #         if isinstance(img, np.ndarray):
-        #             sample[k] = cv2.copyMakeBorder(img, border)
-        #         else:
-        #             sample[k] = TF.pad(img, border)
-        #         # viz.tensor_imshow(sample[k])
-        # return sample
 
 
-class CenterAndCrop:
+class CenterCrop:
     def __init__(self, height, width):
         """
         crop out center of image to be in resolution hxw.
@@ -280,8 +268,6 @@ class CenterAndCrop:
 class ExtractSkyMask:
     def __call__(self, sample):
         """
-        IMPORTANT: mask extraction must be done BEFORE normalization!
-
         Objective: mask out the sky (as it just confuses the model).
         In any case, we don't care about it.
 
@@ -313,7 +299,7 @@ class ExtractSegmentationMask:
     def __init__(self):
         """
         extract semantic map from pretrained model, for knowing where to ignore in the image,
-        since we only have depth info on mountains..
+        since we only have depth info on mountains.
         """
         self.names = {}
         with open('semseg/object150_info.csv') as f:
@@ -359,8 +345,6 @@ class ExtractSegmentationMask:
         img_data = sample['image']
         old_shape = img_data.shape[1], img_data.shape[2]
         img_data = ResizeToAlmostResolution(180, 224)({'image': img_data})['image']
-        # img_original = sample['og_image'].cpu().numpy().transpose(1, 2, 0)
-        # print(img_data.shape)
         singleton_batch = {'img_data': img_data[None]}
         output_size = img_data.shape[1:]
         # Run the segmentation at the highest resolution.
@@ -369,21 +353,15 @@ class ExtractSegmentationMask:
         # Get the predicted scores for each pixel
         _, pred = torch.max(scores, dim=1)
         pred = TF.resize(pred, old_shape, Image.NEAREST)
-        bad_classes = torch.Tensor([1, 4, 12, 20, 25, 83, 116, 126, 127]).to(device=defs.get_dev())
-        pred[(pred[..., None] == bad_classes).any(-1)] = 0
-        # segmasknp = np.isin(pred.cpu().numpy(), , invert=True)
-        # segmask = torch.from_numpy(segmasknp).to(device=defs.get_dev())
+        # other irrelevant classes: 1, 4, 12, 20, 25, 83, 116, 126, 127.
+        # see csv in semseg folder.
+        bad_classes = torch.Tensor([2]).to(device=defs.get_dev())
+        mask = torch.full_like(pred, True, dtype=torch.bool)
+        mask[(pred[..., None] == bad_classes).any(-1)] = False
         if 'mask' in sample:
-            sample['mask'] = sample['mask'] & pred
+            sample['mask'] = sample['mask'] & mask
         else:
-            sample['mask'] = pred
-            # pred = pred.cpu()[0].numpy()
-            # self.visualize_result(img_original, pred)
-            # Top classes in answer
-            # predicted_classes = np.bincount(pred.flatten()).argsort()[::-1]
-            # for c in predicted_classes[:15]:
-            #     self.visualize_result(img_original, pred, c)
-            # plt.show()
+            sample['mask'] = mask
         return sample
 
 
@@ -425,23 +403,21 @@ class ExtractSegmentationMaskSimple:
         colors = (colors % 255).numpy().astype("uint8")
         # plot the semantic segmentation predictions of 21 classes in each color
         h, w = list(sample['image'].shape[1:])
-        # r = Image.fromarray(segmap_pred.byte().cpu().numpy()).resize((w, h))
-        # r.putpalette(colors)
-        # plt.subplot(121)
-        # plt.imshow(r)
-        # plt.subplot(122)
-        # viz.tensor_imshow(sample['og_image'])
-        # plt.show()
         segmentation_mask = segmap_pred == 0
         if 'mask' in sample:
             sample['mask'] = sample['mask'] & segmentation_mask
         else:
             sample['mask'] = segmentation_mask
         return sample
-        # viz.show_sample({**sample, 'segmap_pred': segmap_pred})
 
 
-class NormalizeDepth:
+class ReverseMask:
+    def __call__(self, sample):
+        sample['mask'] = torch.logical_not(sample['mask'])
+        return sample
+
+
+class DepthToZScore:
     def __call__(self, sample):
         depth_mean = torch.Tensor([defs.cfg['normalization']['depth_mean']]).to(device=defs.get_dev())
         depth_std = torch.Tensor([defs.cfg['normalization']['std_mean']]).to(device=defs.get_dev())
@@ -456,7 +432,6 @@ def norm_img_imagenet(sample):
     sample['og_image'] = sample['image'].clone()
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
-    # x['image'] = (x['image'] / 255 - mean) / std
     sample['image'] = TF.normalize(sample['image'], mean=mean, std=std)
     return sample
 
@@ -464,12 +439,9 @@ def norm_img_imagenet(sample):
 class NormalizeImg:
     """normalize images and depths based on our crop results."""
 
-    # {'image': tensor([0.4168, 0.4701, 0.5008]), 'depth': array([3808.661], dtype=float32)}
-    # {'image': tensor([0.1869, 0.1803, 0.1935]), 'depth': array([3033.6562], dtype=float32)}
     def __call__(self, sample):
         image_mean = torch.Tensor(defs.cfg['normalization']['image_mean']).to(defs.get_dev())
         image_std = torch.Tensor(defs.cfg['normalization']['image_std']).to(defs.get_dev())
-        # sample['original_image'] = sample['image']
         sample['image'] = TF.normalize(sample['image'], image_mean, image_std)
         return sample
 
@@ -487,62 +459,160 @@ class NormMinMaxDepth:
         depth = sample['depth']
         depth -= min_val
         depth /= max_val - min_val
+        depth = torch.clamp(depth, max=1)
         # depth += epsilon  # for ability to plot.
         assert depth.min() >= 0 and depth.max() <= 1, "depth is out of [0-1] range"
         sample['depth'] = depth
         return sample
 
 
-def reverseMinMaxScale(img):
+class reverseMinMaxScale():
+    def __call__(self, sample):
+        """
+        reverses the minmax scaling done to the depth image.
+        Args:
+            img: depth image to be rescaled to original depths
+
+        Returns: rescaled image.
+
+        """
+        min_val = defs.cfg['normalization']['depth_min']
+        max_val = defs.cfg['normalization']['depth_max']  # found from EDA,
+        sample['depth'] *= max_val - min_val
+        sample['pred'] *= max_val - min_val
+        sample['depth'] += min_val
+        sample['pred'] += min_val
+        return sample
+
+
+def pad_to_aspect_ratio_and_resize(dataset_name):
+    cfg_ds = defs.cfg['dataset']
+    aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
+    tf = transforms.Compose([FillNaNsFFS(),
+                             DatasetToTensor(dataset_name),
+                             PadToAspectRatio(aspect_ratio=aspect_ratio),
+                             ResizeToResolution(height=h, width=w),
+                             norm_img_imagenet])
+    return Compose([tf, normalize_depth(dataset_name)])
+
+
+def normalize_depth(dataset='geopose'):
     """
-    reverses the minmax scaling done to the depth image.
     Args:
-        img: depth image to be rescaled to original depths
+        dataset:
 
-    Returns: rescaled image.
+    Returns: normalization object for dataset according to configs.yml.
 
     """
-    min_val = defs.cfg['normalization']['depth_min']
-    max_val = defs.cfg['normalization']['depth_max']  # found from EDA,
-    img *= max_val - min_val
-    img += min_val
-    return img
+    if dataset == 'farsight':
+        norm = Compose([])
+    elif defs.cfg['normalization']['depth_norm'] == 'minmax':
+        norm = NormMinMaxDepth()
+    elif defs.cfg['normalization']['depth_norm'] == 'z':
+        norm = DepthToZScore()
+    return norm
 
 
-def pad_to_aspect_ratio_and_resize():
-    cfg_ds = defs.cfg['dataset']
-    aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
-    return transforms.Compose([FillNaNsFFS(),
-                               GeoposeToTensor(),
-                               PadToResolution])
+class RandomHorizontalFlip:
+    """
+    flips image and its depth with probability p.
+    """
+
+    def __init__(self, p=cfg_aug['flip_p']):
+        self.p = p
+
+    def __call__(self, sample):
+        if cfg_aug['horizontal_flip'] and random.random() < self.p:
+            for k, v in sample.items():
+                if torch.is_tensor(v):
+                    sample[k] = TF.hflip(v)
+        return sample
 
 
-def crop_to_aspect_ratio_and_resize():
-    cfg_ds = defs.cfg['dataset']
-    aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
-    return transforms.Compose([FillNaNsFFS(),
-                               GeoposeToTensor(),
-                               CropToAspectRatio(aspect_ratio=aspect_ratio),
-                               ResizeToResolution(h, w),
-                               norm_img_imagenet,
-                               NormalizeDepth()])
-    # ExtractSkyMask()])
+class RandomColorJitter:
+    """
+    jitter colors of img, but not depth.
+    """
+
+    def __call__(self, sample):
+        if cfg_aug['color_jitter']:
+            sample['image'] = transforms.ColorJitter().forward(sample['image'])
+        return sample
 
 
-def pad_and_center():
+class RandomGaussianBlur:
+    """
+    blur image with small gaussian blur (depth stays the same).
+    """
+
+    def __init__(self, p=0.5):
+        """
+        initialize probability with which to add blur.
+        Args:
+            p: float, probability for blurring.
+        """
+        self.p = p
+
+    def __call__(self, sample):
+        if cfg_aug['gaussian_blur'] and random.random() < self.p:
+            sample['image'] = transforms.GaussianBlur(3).forward(sample['image'])
+        return sample
+
+
+class RandomGaussianNoise:
+    def __init__(self, p=0.5, std=0.01):
+        self.p = p
+        self.std = std
+
+    def __call__(self, sample):
+        if cfg_aug['gaussian_noise'] and random.random() < self.p:
+            sample['image'] = sample['image'] + torch.randn(sample['image'].size(), device=defs.get_dev()) * self.std
+            sample['image'] = torch.clamp(sample['image'], 0, 1)
+        return sample
+
+
+def get_augmentations():
+    """
+    Returns: composition of image augmentations, according to configs.yml.
+
+    """
+    tforms = Compose([])
+    if cfg_aug['horizontal_flip']:
+        tforms = Compose([tforms, RandomHorizontalFlip()])
+    if cfg_aug['color_jitter']:
+        tforms = Compose([tforms, RandomColorJitter()])
+    if cfg_aug['gaussian_blur']:
+        tforms = Compose([tforms, RandomGaussianBlur()])
+    if cfg_aug['gaussian_noise']:
+        tforms = Compose([tforms, RandomGaussianNoise()])
+    return tforms
+
+
+class DatasetToTensor:
+    """
+    Generalizing class for <DatasetName>ToTensor
+    """
+
+    def __init__(self, dataset):
+        if dataset == 'geopose':
+            self.totensor = GeoposeToTensor()
+        elif dataset == 'farsight':
+            self.totensor = FarsightToTensor()
+
+    def __call__(self, sample):
+        return self.totensor(sample)
+
+
+def resize_and_crop_center(dataset):
     cfg_ds = defs.cfg['dataset']
     h, w = cfg_ds['h'], cfg_ds['w']
     cmp = transforms.Compose([FillNaNsFFS(),
                               ResizeToImgShape(),
                               ResizeToAlmostResolution(h, w, upper_bound=True),
-                              GeoposeToTensor(),
-                              CenterAndCrop(h, w),
+                              DatasetToTensor(dataset),
+                              CenterCrop(h, w),
                               norm_img_imagenet,
                               ])
-    if defs.cfg['normalization']['depth_norm'] == 'minmax':
-        cmp = transforms.Compose([cmp, NormMinMaxDepth()])
-    elif defs.cfg['normalization']['depth_norm'] == 'z':
-        cmp = transforms.Compose([cmp, NormalizeDepth()])
     return cmp
 
 
@@ -555,60 +625,199 @@ class ToPIL:
 
 
 class FillNaNsFFS:
+    """fills in possible nans in a depth map."""
+
     def __call__(self, sample):
         depth = sample['depth']
         sample['depth'] = np.nan_to_num(depth)
         return sample
 
 
+def get_geopose_split(val_percent, test_percent, subset_size=None):
+    """
+    splitting non-randomly bc some images that are close in folder are similar in content.
+    So, to eliminate data-leakage + since all other images are dissimilar anyway, just doing constant split.
+    Args:
+        val_percent: percentage from total dataset for validation
+        test_percent: percentage from total dataset for test.
+        subset_size: int, size of subset from geopose dataset to use in total. default: everything.
+
+    Returns: train_split, val_split, test_split: Datasets of train,val and test.
+
+    """
+    tf = get_transform()
+    ds = GeoposeDataset(transform=tf)
+    if subset_size is not None:
+        ds = Subset(ds, range(subset_size))
+    n_test = int(len(ds) * test_percent)
+    n_val = int(len(ds) * val_percent)
+    n_train = len(ds) - (n_val + n_test)
+    logger.info(f'\nds size: {len(ds)}'
+                f'\ntrain size: {n_train}'
+                f'\nval_size: {n_val}'
+                f'\ntest_size (might be irrelevant): {n_test}')
+    train_split = Subset(ds, range(n_train))
+    val_split = Subset(ds, range(n_train, n_train + n_val))
+    test_split = Subset(ds, range(n_train + n_val, n_train + n_val + n_test))
+    assert len(train_split) + len(val_split) + len(test_split) == len(ds), \
+        'sizes of datasets don\'t add up to original dataset.' \
+        f'\n{len(train_split) + len(val_split) + len(test_split)} vs {len(ds)}'
+    return train_split, val_split, test_split
+
+
+def get_transform(dataset_name='geopose'):
+    cfg_dataset = cfg['dataset']
+    cropping_system = cfg_dataset['cropping_system']
+    if cropping_system == 'resize_and_crop_center':
+        tf = resize_and_crop_center(dataset_name)
+    elif cropping_system == 'pad_to_aspect_ratio_and_resize':
+        tf = pad_to_aspect_ratio_and_resize(dataset_name)
+    tf = Compose(
+        [tf, normalize_depth(dataset_name), get_mask_transform(), get_augmentations(), add_mask_to_img_if_in_configs])
+    return tf
+
+
+def get_mask_transform():
+    cfg_dataset = cfg['dataset']
+    if cfg_dataset['use_mask']:
+        tf = ExtractSkyMask()
+        if cfg_dataset['mask_type'] == 'simple':
+            tf = Compose([tf, ExtractSegmentationMaskSimple()])
+        elif cfg_dataset['mask_type'] == 'smart':
+            tf = Compose([tf, ExtractSegmentationMask()])
+        elif cfg_dataset['mask_type'] == 'sky_only':
+            pass
+        else:
+            raise Exception('didn\'t specify a legal mask_type but requested to use mask')
+        if cfg_dataset['reverse_mask']:
+            tf = Compose([tf, ReverseMask()])
+    else:
+        tf = Compose([])
+    return tf
+
+
+def get_mixed_datasets(val_percent, test_percent, subset_size=None):
+    """
+    returns a mixed Dataset comprised of the geopose and farsight datasets.
+    Args:
+        val_percent: used by both datasets
+        test_percent: percentage of geopose to use for test.
+        subset_size: (default: everything.)
+    Returns: train_ds, val_ds, geo_test.
+
+    """
+    geo_train, geo_val, geo_test = get_geopose_split(val_percent, test_percent, subset_size)
+    farsight_train, farsight_val = get_farsight_split(subset_size, val_percent)
+    train_ds = ConcatDataset([geo_train, farsight_train])
+    val_ds = ConcatDataset([geo_val, farsight_val])
+    return train_ds, val_ds, geo_test
+
+
+def get_loaders():
+    """
+    get data loaders for train set and val set
+    TODO: make reverseDepth be separate from get_loaders.
+    Returns: dataloaders + possibly reverse function for depth, all according to configs.
+
+    """
+    cfg_train = cfg['train']
+    cfg_validation = cfg['validation']
+    batch_size = cfg_train['batch_size']
+    batch_size_val = cfg['validation']['batch_size']
+    ds_name = cfg['dataset']['name']
+    subset_size = cfg_train['subset_size']
+    val_percent = cfg_validation['val_percent']
+    test_percent = cfg_validation['test_percent']
+    if not val_percent:
+        val_percent = 0
+    if ds_name == 'geopose_and_farsight':
+        train_split, val_split, test_split = get_mixed_datasets(val_percent, test_percent, subset_size)
+    if ds_name == 'farsight':
+        train_split, val_split = get_farsight_split(subset_size, val_percent)
+    elif ds_name == 'geopose':
+        train_split, val_split, test_split, = get_geopose_split(val_percent=val_percent,
+                                                                test_percent=test_percent,
+                                                                subset_size=subset_size)
+    loaders = []
+    train_loader = DataLoader(train_split,
+                              shuffle=True,
+                              batch_size=batch_size,
+                              num_workers=0)
+    loaders.append(train_loader)
+    if cfg_validation['val_round']:
+        val_loader = DataLoader(val_split,
+                                shuffle=cfg_validation['shuffle_val'],
+                                batch_size=batch_size_val,
+                                num_workers=0)
+        loaders.append(val_loader)
+    if cfg_validation['get_test']:
+        test_loader = DataLoader(test_split,
+                                 shuffle=False,
+                                 batch_size=batch_size_val,
+                                 num_workers=0)
+        loaders.append(test_loader)
+        loaders.append(reverseMinMaxScale)
+    return loaders
+
+
+def get_farsight_split(subset_size, val_percent):
+    cfg_train = cfg['train']
+    if cfg_train['use_folds']:
+        train_split, val_split = get_farsight_fold_dataset(1)
+        if subset_size is not None:
+            train_size = int(subset_size * (1 - val_percent))
+            val_size = int(subset_size * val_percent)
+            train_split = Subset(train_split, range(train_size))
+            val_split = Subset(val_split, range(val_size))
+    else:
+        ds = FarsightDataset(transform=get_transform(dataset_name='farsight'))
+        if subset_size is not None:
+            ds = Subset(ds, range(subset_size))
+        n_val = int(len(ds) * val_percent)
+        n_train = len(ds) - n_val
+        train_split, val_split = random_split(ds,
+                                              [n_train, n_val],
+                                              generator=torch.Generator().manual_seed(42))
+    return train_split, val_split
+
+
+def get_farsight_fold_dataset(fold):
+    """
+    creates a train and val dataset,
+    with the fold being which scene is used as val.
+
+    Args:
+        fold: index, scene no. to be used as val.
+
+    Returns: train_dataset, val_dataset
+
+    """
+    assert fold < 4, "Farsight has only 4 scenes, fold must be between 0 and 3."
+    files = [fn for fn in os.listdir(get_img_dir()) if fn.lower().endswith('.png')]
+    files.sort()
+    files_df = pd.DataFrame(files, columns=['filename'])
+    files_df['city'] = files_df['filename'].apply(lambda x: x.split(sep='_')[0])
+    train_idxs = []
+    val_idxs = []
+    for i, (_, g) in enumerate(files_df.groupby('city')):
+        if i == fold:
+            val_idxs += list(g['filename'].values)
+        else:
+            train_idxs += list(g['filename'].values)
+    shuffle(train_idxs)
+    # TODO: make this not so shady as it is now. Maybe it's ok?
+    if defs.cfg['validation']['shuffle_val']:
+        shuffle(val_idxs)
+    train_ds = FarsightDataset(get_transform(dataset_name='farsight'), train_idxs)
+    val_ds = FarsightDataset(get_transform(dataset_name='farsight'), val_idxs)
+    return train_ds, val_ds
+
+
 if __name__ == '__main__':
-    # geoset = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
-    #                                                       ResizeDepth(),
-    #                                                       CenterAndCrop(680, 1024)
-    #                                                       ]))
-    # geoset_no_crop = GeoposeDataset(transform=transforms.Compose([GeoposeToTensor(),
-    #                                                               ResizeDepth()]))
-    # dl = DataLoader(geoset, batch_size=4)
-    # batch = next(iter(dl))
-    # s2 = next(iter(geoset_no_crop))
-    # print single sample,
-    # since if we don't crop we can't have them all in one batch.
     import logging
 
-    logging.basicConfig(level=logging.INFO)
-    cfg_ds = defs.cfg['dataset']
-    aspect_ratio, h, w = cfg_ds['aspect_ratio'], cfg_ds['h'], cfg_ds['w']
+    loaders = get_loaders()
+    train_loader = loaders[0]
+    viz.show_batch(next(iter(train_loader)))
 
-    shitty_transform = transforms.Compose([FillNaNsFFS(),
-                                           GeoposeToTensor(),
-                                           ResizeToImgShape(),
-                                           ResizeToResolution(h, w)])
-    geoset = GeoposeDataset()
-    # geoset = GeoposeDataset(transform=transforms.Compose([
-    #     FillNaNsFFS(),
-    #     ResizeToImgShape(),
-    #     ResizeToAlmostResolution(180, 240),
-    #     GeoposeToTensor(),
-    #     ExtractSkyMask(),
-    #     norm_img_imagenet,
-    #     ExtractSegmentationMaskSimple(),
-    #
-    #     PadToAspectRatio(4 / 3),
-    #
-    # ]))
-    # flickr_sge_13078985295_c4204c63a7_o
-    # 28488116812_f5a57ca0f6_k
-    # flickr_sge_10118947555_a8a13b6338_o_grid_1_0
-    # .008_0
-    # .008.xml_0_1_0
-    # .682226
-    # flickr_sge_12052835295_6bc07b9b18_o
-    # eth_ch1_IMG_5238_01024
-    # flickr_sge_12052835295_6bc07b9b18_o
-    sample = geoset['eth_ch1_39298990_01024']
-    pred = np.load('depthestim.npy', allow_pickle=True)
-    # viz.show_batch(batch)
-    d = cv2.resize(sample['depth'], (1024, 684), interpolation=cv2.INTER_NEAREST)
-    disp = abs(d - pred)
-    viz.show_sample({**sample, 'pred': pred, 'disp': disp})
-    plt.show()
+    print('done')

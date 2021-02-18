@@ -4,15 +4,19 @@
 dataset:
   name: geopose
   data_dir: ../data/farsight
-  depth_foldername: depth_without_bad_images
+  depth_foldername: depth_in_meters_wo_bad
   img_foldername: img_without_bad_images
   test_foldername: test
   geopose_path: '../data/geoPose3K'
   # '/mnt/d/Users/Ariel/Documents/DS_/15. MDE with laser reference point/laser-mde/data/geoPose3K_img_and_depth'
   aspect_ratio: 1
-  h: 256 #228 #256
-  w: 256 #304 #256
-  use_mask: False
+  h: 512 #228 #256
+  w: 1024 #304 #256
+  use_mask: True
+  add_mask_to_image: True
+  reverse_mask: True
+  mask_type: simple # simple, smart, sky_only
+  cropping_system: resize_and_crop_center
 misc:
   verbose: True
   random_seed: 42 # if none won't have constant seed.
@@ -24,9 +28,9 @@ checkpoint:
   # if you load a checkpoint, run_name is ignored.
   # if save_every is empty, it won't save.
   use_saved: False # will continue in trains showing old config file.
-  saved_path: new-unet-wo-mask-w-val-300
-  run_name: new-unet-wo-mask-w-val-300
-  save_every:
+  saved_path: geo_1000_epochs_all_data_max24k_simple_mask/epoch_0049.pt
+  run_name: geo_1000_epochs_all_data_max24k_simple_mask
+  save_every: 50
 
 model:
   # is irrelevant if you're loading a saved model.
@@ -40,25 +44,27 @@ model:
 
 optim:
   loss: rmsle # rmsle, berhu triple or grad.
-  lr: 1.e-3
+  lr: 1.e-4
   use_lr_scheduler: False
   # randomdata?
   # shuffledata?
 
 train:
-  batch_size: 16
+  batch_size: 8
   epochs: 1000
-  subset_size: 300
+  subset_size:
   use_folds: True
   print_every: 1
 
 validation:
-  batch_size: 10
   val_round: True
+  batch_size: 1
   val_percent: 0.2
+  test_percent: 0.1
+  get_test: True
   shuffle_val: True
   hist: False
-#  metric: rmsle
+  metric: RMSLELoss
 
 data_augmentation:
   flip_p: 0.5
@@ -71,8 +77,8 @@ data_augmentation:
 normalization:
   depth_norm: minmax
   depth_min: -1
-  depth_max: 254957
-  image_mean: [0.4168, 0.4701, 0.5008]
-  image_std: [0.1869, 0.1803, 0.1935]
+  depth_max: 26000 # 254957, should have looked at hist of depths... whatever.
+  image_mean: [ 0.4168, 0.4701, 0.5008 ]
+  image_std: [ 0.1869, 0.1803, 0.1935 ]
   depth_mean: 3808.661
   std_mean: 3033.6562

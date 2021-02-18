@@ -6,22 +6,19 @@ import torch.nn as nn
 from clearml import Task
 from torch import optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader, Subset, random_split
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from matplotlib import pyplot as plt
+
+import losses_and_metrics
 import model
 import visualize as viz
-from data_loader import FarsightDataset, GeoposeDataset, FarsightToTensor, get_farsight_fold_dataset
 from fcrn_pytorch.utils import loss_berhu
-from other_models.tiny_unet import UNet
-from prepare_data import crop_to_aspect_ratio_and_resize, pad_and_center, reverseMinMaxScale
-import prepare_data
-from utils import get_dev, cfg, get_folder_name, set_cfg
-from torchvision.transforms import Compose
+from other_arches.tiny_unet import UNet
+from prepare_data import get_loaders
+from utils import get_dev, cfg, get_folder_name, set_cfg, save_checkpoint, load_checkpoint
 from fcrn_pytorch.fcrn import FCRN
 from fcrn_pytorch.weights import load_weights
-import segmentation_models_pytorch as smp
 
 logger = logging.getLogger(__name__)
 if cfg['misc']['verbose']:
@@ -55,7 +52,7 @@ def train():
     """
     main train loop. all configurations are taken from the configs.yml file.
     Returns:
-        trained net
+        None, saves checkpoints of net as it trains into file (+ is saved by clearml).
     """
     logger.info('getting params, dataloaders, etc...')
     cfg_train = cfg['train']
@@ -64,26 +61,30 @@ def train():
     epochs = cfg_train['epochs']
     print_every = cfg_train['print_every']
     save_every = cfg_checkpoint['save_every']
-    # use_writer = cfg['misc']['use_writer']
     folder_name = get_folder_name()
-    # if use_writer:
     writer = SummaryWriter(os.path.join('runs', folder_name))
     loaders = get_loaders()
     train_loader, val_loader = None, None
-    if len(loaders) == 3:
+    len_loaders = len(loaders)
+    if len_loaders == 4:
+        train_loader, val_loader, test_loader, depth_postprocessing = loaders
+    if len_loaders == 3:
         train_loader, val_loader, depth_postprocessing = loaders
-    elif len(loaders) == 2:
+    elif len_loaders == 2:
         train_loader, val_loader = loaders
         depth_postprocessing = None
-    assert train_loader is not None and val_loader is not None, "problem with loader."
+    elif len_loaders == 1:
+        train_loader = loaders[0]
+        depth_postprocessing = None
+    assert train_loader is not None and (
+                val_loader is not None or not cfg_validation['val_round']), "problem with loader."
     n_batches = len(train_loader)
-    # TODO: fix weird float32 requirement in conv2d to work with uint8. Quantization?
     cfg_model = cfg['model']
     cfg_checkpoint = cfg['checkpoint']
     cfg_optim = cfg['optim']
     if cfg_checkpoint['use_saved']:
         net, optimizer, epoch_start, running_loss = load_checkpoint()
-        criterion = get_criterion()
+        criterion = get_loss_function()
         epoch_start = epoch_start + 1  # since we stopped at the last epoch, continue from the next.
     else:
         criterion, net, optimizer = get_net()
@@ -99,7 +100,7 @@ def train():
             for data in train_loader:
                 # get the inputs; data is a list of [input images, depth maps]
                 img, gt_depth = data['image'], data['depth']
-                if cfg['dataset']['use_mask']:
+                if cfg['dataset']['use_mask'] and not cfg['dataset']['add_mask_to_image']:
                     assert 'mask' in data, 'no mask but required mask'
                     mask = data['mask']
                 else:
@@ -112,26 +113,22 @@ def train():
                 pbar.update()
 
             if cfg_optim['use_lr_scheduler']:
-                val_score, val_sample = eval_net(net, val_loader, criterion)
+                val_score, val_sample = eval_net(net, val_loader)
                 scheduler.step(val_score)  # possibly plateau LR.
                 new_lr = optimizer.param_groups[0]['lr']
                 if old_lr != new_lr:
                     print(fr'old lr: {old_lr}, new lr: {new_lr}')
                 old_lr = new_lr
             if epoch % print_every == print_every - 1:
-                #     # TODO: maybe add train_val
                 if not cfg_optim['use_lr_scheduler']:
                     if cfg_validation['val_round']:
                         assert cfg_validation[
                                    'val_percent'] is not None, 'required val_round but didn\'t give a split size'
-                        val_score, val_sample = eval_net(net, val_loader, criterion)
+                        val_score, val_sample = eval_net(net, val_loader)
                     else:
                         val_score = None
                         val_sample = None
                 train_loss = running_loss / (print_every * n_batches)
-                # data['log_gt_depth'] = data['depth']
-                # del data['depth']
-                # del data['image']
                 # TODO: see how to save og image for printing w.o doing it for every batch.
                 train_sample = {**data, 'pred': pred_depth}
                 if cfg['validation']['hist']:
@@ -140,8 +137,9 @@ def train():
                     viz_net = None
                 if depth_postprocessing:
                     logger.info('post-processing prediction and depth.')
-                    train_sample['pred'] = depth_postprocessing(train_sample['pred'])
-                    train_sample['depth'] = depth_postprocessing(train_sample['depth'])
+                    train_sample = depth_postprocessing(train_sample)
+                    if cfg_validation['val_round']:
+                        val_sample = depth_postprocessing(val_sample)
                 print_stats(train_sample, val_sample,
                             train_loss, val_score, epoch,
                             writer, viz_net)
@@ -181,17 +179,20 @@ def step(criterion, img, gt_depth, net, optimizer, mask=None):
     return loss, pred
 
 
-def eval_net(net, loader, metric):
+def eval_net(net, loader):
     """
     Validation stage in the training loop.
 
     Args:
         net: network being trained
         loader: data loader of validation data
-        metric: metric to test validation upon.
-    Returns: score of eval based on criterion.
+    Returns: score, sample_val: score of eval based on criterion + a sample from the eval_loader.
 
     """
+    if cfg['validation']['metric'] is not None:
+        metric = cfg['validation']['metric']
+        assert metric in losses_and_metrics.__dict__, 'metric not implemented'
+        metric = model.__dict__[metric]()
     net.eval()
     n_val = len(loader)
     score = 0
@@ -282,17 +283,12 @@ def get_net():
     if model_name == 'fcrn':
         net = FCRN()
     elif model_name == 'unet':
-        # if cfg['dataset']['name'] == 'geopose':
-        #     if cfg['dataset']['use_mask']:
-        #         in_channel = 4
-        #     else:
-        #         in_channel = 3
-        #     # TODO: fix if you don't do minmax scaling in the end.
-        # else:
-        #     in_channel = 3
         net = UNet(3)
     elif model_name.startswith('resnet'):
-        net = model.ResnetUnet()
+        if cfg['dataset']['use_mask'] and cfg['dataset']['add_mask_to_image']:
+            net = model.ResnetUnet(in_channels=4)
+        else:
+            net = model.ResnetUnet(in_channels=3)
     elif model_name == 'toynet':
         net = model.toyNet()
     else:
@@ -305,23 +301,27 @@ def get_net():
     net.to(device=get_dev())
     print('using ', get_dev())
     # TODO: use loss in configs for loss.
-    criterion = get_criterion()
+    criterion = get_loss_function()
     optimizer = optim.Adam(net.parameters(), lr=cfg_optim['lr'])
     return criterion, net, optimizer
 
 
-def get_criterion():
+def get_loss_function():
+    """
+    Returns:
+
+    """
     cfg_optim = cfg['optim']
     loss_func_name = cfg_optim['loss'].lower()
     if loss_func_name.startswith('rmsle'):
         logger.info('using rmsle')
-        criterion = model.RMSLELoss()
+        criterion = losses_and_metrics.RMSLELoss()
     elif loss_func_name.startswith('mse'):
         criterion = nn.MSELoss()
     elif loss_func_name == 'triple':
-        criterion = model.triple_loss
+        criterion = losses_and_metrics.triple_loss
     elif loss_func_name == 'grad':
-        criterion = model.grad_loss
+        criterion = losses_and_metrics.grad_loss
     elif loss_func_name == 'berhu':
         criterion = loss_berhu()
     else:
@@ -329,151 +329,12 @@ def get_criterion():
     return criterion
 
 
-def get_geopose_split(subset_size, val_percent):
-    if cfg['dataset']['use_mask']:
-        tf = Compose([pad_and_center(),
-                      prepare_data.ExtractSkyMask(),
-                      prepare_data.ExtractSegmentationMaskSimple()])
-    else:
-        tf = pad_and_center()
-    ds = GeoposeDataset(transform=tf)
-    # ds = GeoposeDataset(transform=pad_and_center())
-    # logger.warning('using hardcoded images, change when using non toy data!!')
-    # imgs = ['eth_ch1_2011-04-30_18_37_52_01024',
-    #         'eth_ch1_2011-04-30_18_40_20_01024']
-    if subset_size is not None:
-        # ds = Subset(ds, imgs)
-        ds = Subset(ds, range(subset_size))
-    n_val = int(len(ds) * val_percent)
-    n_train = len(ds) - n_val
-    train_split, val_split = random_split(ds,
-                                          [n_train, n_val],
-                                          generator=torch.Generator().manual_seed(42))
-    return train_split, val_split
-
-
-def get_loaders():
-    """
-    get data loaders for train set and val set
-
-    Returns: train_loader and val_loader (pytorch dataloaders).
-
-    """
-    cfg_train = cfg['train']
-    cfg_validation = cfg['validation']
-    batch_size = cfg_train['batch_size']
-    batch_size_val = cfg['validation']['batch_size']
-    ds_name = cfg['dataset']['name']
-    subset_size = cfg_train['subset_size']
-    val_percent = cfg_validation['val_percent']
-    if not val_percent:
-        val_percent = 0
-    if ds_name == 'farsight':
-        train_split, val_split = get_farsight_split(cfg_train, subset_size, val_percent)
-    elif ds_name == 'geopose':
-        train_split, val_split = get_geopose_split(subset_size, val_percent)
-    train_loader = DataLoader(train_split,
-                              shuffle=False,
-                              batch_size=batch_size,
-                              num_workers=0)
-    val_loader = DataLoader(val_split,
-                            shuffle=False,
-                            batch_size=batch_size_val,
-                            num_workers=0)
-    if ds_name == 'farsight':
-        return train_loader, val_loader
-    elif ds_name == 'geopose':
-        return train_loader, val_loader, reverseMinMaxScale
-
-
-def get_farsight_split(cfg_train, subset_size, val_percent):
-    if cfg_train['use_folds']:
-        train_split, val_split = get_farsight_fold_dataset(1)
-        if subset_size is not None:
-            train_size = int(subset_size * (1 - val_percent))
-            val_size = int(subset_size * val_percent)
-            train_split = Subset(train_split, range(train_size))
-            val_split = Subset(val_split, range(val_size))
-    else:
-        # TODO: generalize dataset to any dataset (hills for example).
-        ds = FarsightDataset(transform=FarsightToTensor())
-        if subset_size is not None:
-            ds = Subset(ds, range(subset_size))
-        n_val = int(len(ds) * val_percent)
-        n_train = len(ds) - n_val
-        train_split, val_split = random_split(ds,
-                                              [n_train, n_val],
-                                              generator=torch.Generator().manual_seed(42))
-    # TODO: check rnd. gen is consistent.
-    # TODO: make optional to use manual seed or random at some point. (same for DL?)
-    return train_split, val_split
-
-
-def save_checkpoint(epoch, net, optimizer, running_loss):
-    """
-    save a checkpoint of the network for future use.
-    location is defined in configs.yml file.
-    Args:
-        epoch: int.
-        net: network object (both weights and model object base is saved).
-        optimizer
-    # TODO: check rnd. gen is consistent.: optimizer object (only weights are saved).
-        running_loss: float, current loss (for possibly future use).
-
-    Returns: None (checkpoint saved).
-
-    """
-    logger.info(f'\nsaving checkpoint at epoch {epoch}...')
-    folder = get_folder_name()
-    folder = os.path.join('../models', folder)
-    filename = 'epoch_' + str(epoch).zfill(4) + '.pt'
-    if not os.path.exists(folder):
-        os.mkdir(folder)
-    full_path = os.path.join(folder, filename)
-    if os.path.exists(full_path):
-        logger.warning(f'not saving {full_path} as it already exists.')
-        return
-    torch.save({
-        'model': net,
-        'optimizer': optimizer,
-        'epoch': epoch,
-        'loss': running_loss
-    }, full_path)
-
-
-def load_checkpoint(path=None):
-    """
-    load a saved checkpoint from the training process,
-    be it for continued training or inference.
-    location from which to load checkpoint is defined in configs.yml file.
-
-    Args:
-        path (string, optional): specify manual location of checkpoint.
-                                 defaults to path in configs file.
-    Returns: (net, optim, epoch, loss) where:
-        net: weighted net
-        optim: weighted optimizer
-        epoch: updated epoch from checkpoint
-        loss: current loss in checkpoint.
-
-    """
-    if path is None:
-        path = os.path.join('..', 'models', cfg['checkpoint']['saved_path'])
-    if not path.endswith('.pt'):
-        # default to last trained model.
-        path = os.path.join(path, max(os.listdir(path)))
-    if not os.path.exists(path):
-        raise FileNotFoundError
-    logger.info(f'loading from {path}')
-    checkpoint = torch.load(path)
-    net = checkpoint['model']
-    optim = checkpoint['optimizer']
-    epoch = checkpoint['epoch']
-    loss = checkpoint['loss']
-    return net, optim, epoch, loss
-
-
 def coarse_to_fine_train():
+    """
+    super basic manual coarse-to-fine training.
+    Returns:
+        None
+    """
     lrs = [1e-4, 1e-2]
     ids = ['4f8b87a1e1684be9a8e34ede211d3233',
            '3e252824dbf0485ca4d16ce6e5daad88']
@@ -489,6 +350,14 @@ def coarse_to_fine_train():
 
 
 def use_clearml(taskid=None):
+    """
+    does setup for clearml connection.
+    Args:
+        taskid: id of experiment to be reused. default is a new experiment.
+
+    Returns: clearml_logger, task object.
+
+    """
     if cfg['checkpoint']['use_saved']:
         cfg['checkpoint']['saved_path'] = cfg['checkpoint']['run_name']
         task = Task.init(continue_last_task=True,
@@ -506,22 +375,8 @@ def use_clearml(taskid=None):
 
 
 if __name__ == '__main__':
-    """
-    lr
-    batch_size
-    use_bn
-    use_double_bn
-    dropout
-    random_seed
-    flip_p
-    """
     if cfg['misc']['use_trains']:
         _, task = use_clearml()
     train()
     if cfg['misc']['use_trains']:
-        task.close()
-    # UniformParameterRange('config/data_augmentation/horizontal_flip', min_value=0, max_value=1),
-    # UniformParameterRange('config/data_augmentation/color_jitter', min_value=0, max_value=1),
-    # UniformParameterRange('config/data_augmentation/gaussian_blur', min_value=0, max_value=1),
-    # UniformParameterRange('config/data_augmentation/gaussian_noise', min_value=0, max_value=1)
-    # train()
+        task.completed()

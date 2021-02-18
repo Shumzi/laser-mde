@@ -2,7 +2,10 @@ import numpy as np
 import torch
 from PIL import Image
 from matplotlib import pyplot as plt
+from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import functional as TF
+from utils import load_checkpoint
+import os
 
 
 class Unravel:
@@ -28,52 +31,40 @@ class Unravel:
 def show_batch(batch):
     """
     plot a batch of samples. can be images + depth + pred, or whatever.
-    To be used when taking a batch from Dataloader.
+    To be used when plotting a batch from Dataloader.
     Args:
-        postprocessing: postprocessing on
         batch: dict of batch, each key being a different type of image.
                 If dict contains 'name' key, it'll be used as the filenames for each img tuple.
                 batch should contain AT LEAST 2 objects to be plotted. we're not playing here.
 
     Returns: fig of plot.
 
-    Examples:
+    Example:
         >> batch = {'image':list_of_images, 
                 'depth':list_of_depths,
                 'name':list_of_filenames}
         >> show_batch(batch)
         >> plt.show()
     """
-    try:
-        filenames = batch.pop('name')
-    except:
-        filenames = None
+    filenames = batch.get('name', None)
     image_type_names, image_types = list(batch.keys()), list(batch.values())  # image_type_names: image, depth, etc.
-    # for image_type in image_types:
-    #     if len(image_type.shape) == 2 or (len(image_type.shape) == 3 and
     batch_size = image_types[0].shape[0]
-    tuple_size = len(image_types)  # amount of images in per sample we'll be displaying.
+    tuple_size = len(image_types)  # amount of image types per sample we'll be displaying.
+    # e.g. if we have img,depth - then 2.
     u = Unravel(tuple_size, batch_size)
     fig, ax = plt.subplots(tuple_size, batch_size, figsize=(batch_size * 4 + 2, tuple_size * 4))
-    # image type
+    # image type names (depth, image, pred, etc.)
     for i, type_name in enumerate(image_type_names):
         ax[u(i * batch_size)].set_ylabel(type_name, fontsize='x-large')
-    # sample number
+    # titles of filenames
     if filenames is not None:
         for j, fn in enumerate(filenames):
             ax[u(j)].set_title('sample #{}\n{}'.format(j, fn))
-        # push back into dict.
-        batch['name'] = filenames
     else:
         for j in range(batch_size):
             ax[u(j)].set_title('sample #{}'.format(j))
     # display actual image.
     for i, image_type in enumerate(image_types):
-        # TODO: lognorm for plotting.
-        # if 'log' in image_type_names[i]:
-        #     norm = colors.LogNorm()
-        # else:
-        #     norm = None
         if torch.is_tensor(image_type):
             image_type = image_type.detach().cpu().numpy()
             if image_type.shape[1] == 4:  # remove alpha/mask
@@ -87,12 +78,7 @@ def show_batch(batch):
         if len(image_type.shape) == 2:
             image_type = np.expand_dims(image_type, 0)
         for j, img in enumerate(image_type):
-            # if img.min() < 0:
-            #     # depths etc, just show whatever you can.
-            #     scaled = (img.squeeze() - img.min()) / (img.max() - img.min())
-            #     im = ax[u(i * batch_size + j)].imshow(scaled)
-            # else:
-
+            # TODO: vmin,vmax for pred and gt to be the same.
             im = ax[u(i * batch_size + j)].imshow(img.squeeze())
             if len(img.shape) == 2:  # grayscale
                 fig.colorbar(im, ax=ax[u(i * batch_size + j)])
@@ -106,7 +92,7 @@ def show_sample(sample):
     Args:
         sample: single sample
 
-    Returns:
+    Returns: fig of plot.
 
     """
     for k, v in sample.items():
@@ -118,6 +104,16 @@ def show_sample(sample):
 
 
 def blend_images(im1, im2):
+    """
+    blends two PIL images (with .25 alpha for second one).
+    Args:
+        im1: PIL image.
+        im2: PIL image.
+
+    Returns:
+        blended pil image.
+
+    """
     # im = Image.fromarray(np.uint8(cm.(im1) * 255))
     if type(im1) == np.ndarray:
         im1 = Image.fromarray(im1)
@@ -135,12 +131,12 @@ def blend_images(im1, im2):
 
 def get_sub_batch(batch, subsize):
     """
-    return first subsize samples in batch.
+    return first <subsize> samples in batch.
     Args:
         batch: batch of samples.
-        subsize:
+        subsize: num of samples to be taken from batch.
 
-    Returns: sub-batch.
+    Returns: batch (only smaller)
 
     """
     minibatch = {}
@@ -173,12 +169,34 @@ def show_geopose_sample_with_blend(sample):
 
 
 def vis_weight_dist(net, writer, epoch):
+    """
+    plot weight dist in writer.
+    Args:
+        net:
+        writer:
+        epoch:
+
+    Returns: None.
+
+    """
     for tag, value in net.named_parameters():
         tag = tag.replace('.', '/')
         writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), epoch)
         if value.grad is not None:
             writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), epoch)
     # writer.add_histogram('values', train_sample['log_pred'].detach().cpu().numpy(), epoch)
+
+
+def plot_weights():
+    """
+    plot weights of a net checkpoint in summarywriter (i.e. tensorboard).
+    """
+    ckpt = load_checkpoint()
+    net = ckpt[0]
+    writer = SummaryWriter(os.path.join('runs', 'vis_weights'))
+    vis_weight_dist(net, writer, 0)
+    writer.close()
+    print('done')
 
 
 if __name__ == '__main__':

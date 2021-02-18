@@ -95,3 +95,4 @@ target/
 /models/
 /src/semseg/
 /fcrn_pytorch/
+/src/pickles/
