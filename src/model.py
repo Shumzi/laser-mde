@@ -1,13 +1,6 @@
+import segmentation_models_pytorch as smp
 import torch
-from torch.autograd import Variable
 import torch.nn as nn
-import numpy as np
-import torch.nn.functional as F
-import pdb
-from tqdm import tqdm
-import visualize as viz
-from torch.utils.tensorboard import SummaryWriter
-import math
 
 
 class Squeeze(nn.Module):
@@ -16,6 +9,7 @@ class Squeeze(nn.Module):
 
 
 def toyNet():
+    """just a simple net to get to learn pytorch."""
     return nn.Sequential(
         #         WeightValues('start'),
         nn.Conv2d(3, 6, 5),
@@ -34,12 +28,25 @@ def toyNet():
     )
 
 
-class EigenCoarse(nn.Module):
-    """
-    based on eigen et al. 2014 https://arxiv.org/pdf/1406.2283.pdf
-    coarse net to give rough shape of depth,
+class ResnetUnet(nn.Module):
+    def __init__(self, in_channels=3):
+        """
+        Unet with a pretrained Resnet34 backbone for encoding.
+        outputs values in (0..1) range
+        Args:
+            in_channels:
+        """
+        super(ResnetUnet, self).__init__()
+        self.model = smp.Unet(
+            encoder_name="resnet34",  # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
+            encoder_weights="imagenet",  # use `imagenet` pre-trained weights for encoder initialization
+            in_channels=in_channels,  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
+            classes=1,  # model output channels (number of classes in your dataset)
+        )
 
-    """
+    def forward(self, image):
+        x = self.model(image)
+        return torch.sigmoid(x)
 
 
 class WeightValues(nn.Module):
@@ -56,56 +63,5 @@ class WeightValues(nn.Module):
         return x
 
 
-class Sobel(nn.Module):
-    def __init__(self):
-        super(Sobel, self).__init__()
-        self.edge_conv = nn.Conv2d(1, 2, kernel_size=3, stride=1, padding=1, bias=False)
-        edge_kx = np.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
-        edge_ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
-        edge_k = np.stack((edge_kx, edge_ky))
-
-        edge_k = torch.from_numpy(edge_k).float().view(2, 1, 3, 3)
-        self.edge_conv.weight = nn.Parameter(edge_k)
-
-        for param in self.parameters():
-            param.requires_grad = False
-
-    def forward(self, x):
-        out = self.edge_conv(x)
-        out = out.contiguous().view(-1, 2, x.size(2), x.size(3))
-
-        return out
-
-
-class RMSLELoss(nn.Module):
-    """
-    root mean square log error.
-    taken from: https://discuss.pytorch.org/t/rmsle-loss-function/67281
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.mse = nn.MSELoss()
-
-    def forward(self, pred, actual):
-        # plus 1 since log(0) is undefined.
-        return torch.sqrt(self.mse(torch.log(pred + 1), torch.log(actual + 1)))
-
-
-class EigenDepthLoss(nn.Module):
-    """
-    eigen depth which promotes structural consistency.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.mse = nn.MSELoss()
-
-    def forward(self, pred, gt):
-        d = pred - gt
-        pass
-
-
 if __name__ == '__main__':
-    loss = RMSLELoss()
-    print(loss(torch.tensor(math.exp(1), dtype=torch.float32), torch.tensor(1, dtype=torch.float32)))
+    pass

@@ -93,3 +93,6 @@ target/
 /notebooks/runs/
 /src/runs/
 /models/
+/src/semseg/
+/fcrn_pytorch/
+/src/pickles/
