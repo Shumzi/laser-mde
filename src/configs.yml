@@ -1,0 +1,84 @@
+# possibly move to Hydra (FB) if things get complex.
+
+
+dataset:
+  name: geopose
+  data_dir: ../data/farsight
+  depth_foldername: depth_in_meters_wo_bad
+  img_foldername: img_without_bad_images
+  test_foldername: test
+  geopose_path: '../data/geoPose3K'
+  # '/mnt/d/Users/Ariel/Documents/DS_/15. MDE with laser reference point/laser-mde/data/geoPose3K_img_and_depth'
+  aspect_ratio: 1
+  h: 512 #228 #256
+  w: 1024 #304 #256
+  use_mask: True
+  add_mask_to_image: True
+  reverse_mask: True
+  mask_type: simple # simple, smart, sky_only
+  cropping_system: resize_and_crop_center
+misc:
+  verbose: True
+  random_seed: 42 # if none won't have constant seed.
+  use_cuda: True
+  use_trains: True
+  plt_show: False
+
+checkpoint:
+  # if you load a checkpoint, run_name is ignored.
+  # if save_every is empty, it won't save.
+  use_saved: False # will continue in trains showing old config file.
+  saved_path: geo_1000_epochs_all_data_max24k_simple_mask/epoch_0049.pt
+  run_name: geo_1000_epochs_all_data_max24k_simple_mask
+  save_every: 50
+
+model:
+  # is irrelevant if you're loading a saved model.
+  # arch is prebuilt into the .pt file. easier to handle it.
+  weight_init: False
+  weight_file: "../fcrn_pytorch/model/NYU_ResNet-UpProj.npy"
+  name: resnet-unet # fcrn, unet, toy, resnet-unet
+  use_bn: True
+  use_double_bn: False
+  dropout:
+
+optim:
+  loss: rmsle # rmsle, berhu triple or grad.
+  lr: 1.e-4
+  use_lr_scheduler: False
+  # randomdata?
+  # shuffledata?
+
+train:
+  batch_size: 8
+  epochs: 1000
+  subset_size:
+  use_folds: True
+  print_every: 1
+
+validation:
+  val_round: True
+  batch_size: 1
+  val_percent: 0.2
+  test_percent: 0.1
+  get_test: True
+  shuffle_val: True
+  hist: False
+  metric: RMSLELoss
+
+data_augmentation:
+  flip_p: 0.5
+  horizontal_flip: False
+  color_jitter: False
+  gaussian_blur: False
+  gaussian_noise: False
+  # possibly add std and probability for augs over here?
+
+normalization:
+  depth_norm: minmax
+  depth_min: -1
+  depth_max: 26000 # 254957, should have looked at hist of depths... whatever.
+  image_mean: [ 0.4168, 0.4701, 0.5008 ]
+  image_std: [ 0.1869, 0.1803, 0.1935 ]
+  depth_mean: 3808.661
+  std_mean: 3033.6562

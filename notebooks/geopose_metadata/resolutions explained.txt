@@ -1,0 +1,2 @@
+1. first np.load is xdimention of resolution
+2. second is the ydimention.

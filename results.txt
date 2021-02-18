@@ -1,0 +1,16 @@
+my_net_no_aug:
+rmsle_loss: 	1.0674
+d1: 		0.2349
+d2: 		0.4452
+d3: 		0.5902
+si: 		0.7576
+grad_loss: 	501.7543
+
+
+ken_net:
+rmsle_loss: 	1.8205
+d1: 		0.0966
+d2: 		0.1836
+d3: 		0.2663
+si:		1.8257
+grad_loss: 	559.8520
